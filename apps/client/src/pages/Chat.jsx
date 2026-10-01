@@ -7,6 +7,8 @@ import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
 import { Modal } from "../components/Modal";
 import { eventTime } from "../lib/format";
+import data from "@emoji-mart/data";
+import Picker from "@emoji-mart/react";
 
 const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", "👍", "👏", "🙌", "🙏", "💪", "✅", "🎉", "🔥", "⭐", "💡", "❤️", "🚀", "📌", "📅", "💼", "👋"];
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -38,6 +40,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const endRef = useRef();
   const textareaRef = useRef();
   const fileInputRef = useRef();
+  const emojiPickerRef = useRef(null);
+  const reactionPickerRef = useRef(null);
+  const messageMenuRef = useRef(null);
   const socketRef = useRef();
   const selectedPersonRef = useRef(null);
   const selectedChannelRef = useRef(null);
@@ -93,6 +98,37 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     setReplyingTo(null);
     setEditingMessage(null);
   }, [selected, selectedPerson?.id]);
+
+  useEffect(() => {
+  function handleClickOutside(event) {
+    if (
+      emojiPickerRef.current &&
+      !emojiPickerRef.current.contains(event.target)
+    ) {
+      setEmojiOpen(false);
+    }
+
+    if (
+      messageMenuRef.current &&
+      !messageMenuRef.current.contains(target)
+      ) {
+       setMessageMenuId(null);
+    }
+
+    if (
+      reactionPickerRef.current &&
+      !reactionPickerRef.current.contains(event.target)
+    ) {
+      setReactionMessageId(null);
+    }
+  }
+
+  document.addEventListener("mousedown", handleClickOutside);
+
+  return () => {
+    document.removeEventListener("mousedown", handleClickOutside);
+  };
+}, []);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -580,7 +616,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
                   </div>}
                 </div>
                 <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>
-                {messageMenuId === item.id && <div className={`message-actions-menu ${mine ? "align-mine" : ""}`}>
+                {messageMenuId === item.id &&   <div
+                  ref={messageMenuRef}
+                    className={`message-actions-menu ${mine ? "align-mine" : ""}`}
+>
                   {!item.deleted_at && <><button onClick={() => setReactionMessageId(reactionMessageId === item.id ? null : item.id)}><Smile size={16} /> React</button>
                     <button onClick={() => replyToMessage(item)}><Reply size={16} /> Reply</button>
                     <button onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button>
@@ -588,9 +627,12 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
                   <button onClick={() => deleteMessage(item, "me")}><Trash2 size={16} /> Delete for me</button>
                   {mine && !item.deleted_at && <button className="danger-menu-item" onClick={() => deleteMessage(item, "everyone")}><Trash2 size={16} /> Delete for everyone</button>}
                 </div>}
-                {reactionMessageId === item.id && <div className={`message-reaction-picker ${mine ? "align-mine" : ""}`}>
-                  {QUICK_REACTIONS.map((emoji) => <button onClick={() => reactToMessage(item, emoji)} key={emoji}>{emoji}</button>)}
-                </div>}
+                {/* #suraj */}
+                {reactionMessageId === item.id && <div
+    ref={reactionPickerRef}
+    className={`message-reaction-picker ${mine ? "align-mine" : ""}`}
+  >
+              <Picker data={data} onEmojiSelect={(emoji) => {reactToMessage(item, emoji.native); setReactionMessageId(null);  }}theme="light"/>                </div>}
                 </div>
               </Fragment>;
             })}
@@ -609,10 +651,16 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
               <button type="button" className={uploading ? "tool-busy" : ""} onClick={() => fileInputRef.current?.click()} disabled={uploading} title="Attach a file"><Paperclip size={18} /></button>
               <button type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
             </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
-            {emojiOpen && <div className="emoji-picker" role="dialog" aria-label="Choose an emoji">
+            {emojiOpen && 
+            <div
+                ref={emojiPickerRef}
+                className="emoji-picker"
+                role="dialog"
+               aria-label="Choose an emoji"
+              >
               <header><b>Choose an emoji</b><button type="button" onClick={() => setEmojiOpen(false)}><X size={15} /></button></header>
-              <div>{EMOJIS.map((emoji) => <button type="button" key={emoji} onClick={() => insertEmoji(emoji)}>{emoji}</button>)}</div>
-            </div>}
+            <Picker data={data} onEmojiSelect={(emoji) => insertEmoji(emoji.native)} theme="light" />            
+              </div>}
           </form>
         </section>
       )}
