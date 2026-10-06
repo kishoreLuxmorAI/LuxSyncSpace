@@ -73,3 +73,7 @@ export function Login({ onLogin }) {
     </main>
   );
 }
+
+
+
+// chat is enabled
