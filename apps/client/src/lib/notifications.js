@@ -141,6 +141,11 @@ export async function showWorkspaceNotification(title, body, tag = "luxsyncspace
   if (!notificationsEnabled()) return;
   if (document.visibilityState === "visible") return;
   const registration = await getNotificationRegistration();
+  
+  let targetUrl = "/";
+  if (tag && tag.startsWith("channel-")) targetUrl = `/?view=chat&channel=${tag.replace("channel-", "")}`;
+  if (tag && tag.startsWith("direct-")) targetUrl = `/?view=chat&direct=${tag.replace("direct-", "")}`;
+
   await registration.showNotification(title, {
     body,
     tag,
@@ -148,7 +153,7 @@ export async function showWorkspaceNotification(title, body, tag = "luxsyncspace
     badge: "/icons/luxsyncspace-192.png",
     vibrate: sound === "meeting" ? [220, 90, 220, 90, 420] : [180, 80, 180],
     renotify: true,
-    data: { url: "/" }
+    data: { url: targetUrl }
   });
 }
 
