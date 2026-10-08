@@ -275,8 +275,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   }, [selectedPerson]);
 
   useEffect(() => {
-    const compact = window.matchMedia("(max-width: 700px)").matches;
-    endRef.current?.scrollIntoView({ behavior: compact ? "auto" : "smooth" });
+    endRef.current?.scrollIntoView({ behavior: "auto" });
   }, [messages]);
 
   async function send(event) {
