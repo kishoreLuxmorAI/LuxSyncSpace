@@ -93,6 +93,31 @@ export default function App() {
   function openNotification(item) {
     setNotification(null);
     setNotifications((current) => current.map((entry) => entry.id === item.id ? { ...entry, unread: false } : entry));
+
+    if (item.tag && item.tag.startsWith("channel-")) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", "chat");
+      url.searchParams.set("channel", item.tag.replace("channel-", ""));
+      url.searchParams.delete("direct");
+      url.searchParams.delete("meeting");
+      window.history.pushState({ luxsyncspace: true, view: "chat" }, "", url);
+      setActive("chat");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      return;
+    }
+
+    if (item.tag && item.tag.startsWith("direct-")) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", "chat");
+      url.searchParams.set("direct", item.tag.replace("direct-", ""));
+      url.searchParams.delete("channel");
+      url.searchParams.delete("meeting");
+      window.history.pushState({ luxsyncspace: true, view: "chat" }, "", url);
+      setActive("chat");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      return;
+    }
+
     navigate(item.view || "home");
   }
 
@@ -109,12 +134,19 @@ export default function App() {
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    const handleCallAction = (event) => {
-      if (event.data?.type !== "luxsyncspace:call-rejected") return;
-      setIncomingCall((current) => current?.meeting?.id === event.data.meetingId ? null : current);
+    const handleSWMessage = (event) => {
+      if (event.data?.type === "luxsyncspace:call-rejected") {
+        setIncomingCall((current) => current?.meeting?.id === event.data.meetingId ? null : current);
+      }
+      if (event.data?.type === "luxsyncspace:navigate" && event.data.url) {
+        const url = new URL(event.data.url, window.location.origin);
+        window.history.pushState({ luxsyncspace: true, view: url.searchParams.get("view") || "home" }, "", url);
+        setActive(url.searchParams.get("view") || "home");
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      }
     };
-    navigator.serviceWorker.addEventListener("message", handleCallAction);
-    return () => navigator.serviceWorker.removeEventListener("message", handleCallAction);
+    navigator.serviceWorker.addEventListener("message", handleSWMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", handleSWMessage);
   }, []);
 
   async function login(email, password) {
@@ -217,7 +249,7 @@ export default function App() {
     setActive("meetings");
     setMeetingId(null);
     setActiveMeeting(null);
-    refreshWorkspace().catch(() => {});
+    refreshWorkspace().catch(() => { });
   }
 
   async function endMeetingForEveryone(meeting) {
@@ -254,14 +286,14 @@ export default function App() {
   function declineIncomingCall() {
     const meetingId = incomingCall?.meeting?.id;
     setIncomingCall(null);
-    dismissIncomingCallNotification(meetingId).catch(() => {});
+    dismissIncomingCallNotification(meetingId).catch(() => { });
   }
 
   function acceptIncomingCall() {
     const call = incomingCall;
     if (!call) return;
     setIncomingCall(null);
-    dismissIncomingCallNotification(call.meeting?.id).catch(() => {});
+    dismissIncomingCallNotification(call.meeting?.id).catch(() => { });
     joinMeeting(call.meeting);
   }
 
