@@ -21,6 +21,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [chatInfoOpen, setChatInfoOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -582,7 +583,13 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
               {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
               {selected && canCreateGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
-              <button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Bell size={19} /></button><button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Info size={19} /></button>
+              <button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Bell size={19} /></button>
+              <button
+                 className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}
+                 onClick={() => setChatInfoOpen((open) => !open)}
+                 title="Chat information"
+                 aria-label="Chat information"
+                 ><Info size={19} /></button>
             </div>
           </header>
           {selected && messageSearchOpen && <div className="conversation-search">
@@ -683,6 +690,13 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
         <div className="details-members">{channelMembers.slice(0, 6).map((person) => <div key={person.id}><Avatar person={person} size="xs" showPresence /><span><b>{person.full_name}</b><small>{person.title}</small></span></div>)}</div>
         {canCreateGroup && <button className="button button-secondary manage-members-button" onClick={() => setManageMembers(true)}><UserPlus size={16} /> Manage members</button>}
       </aside>}
+      {selectedPerson && chatInfoOpen && (
+         <aside className="chat-details">
+         <Avatar person={selectedPerson} showPresence />
+         <h3>{selectedPerson.full_name}</h3>
+         <p>{selectedPerson.title} · {selectedPerson.department}</p>
+        </aside>
+          )}
       {createGroup && <CreateGroup people={people.filter((person) => person.id !== user.id)} onCreate={submitGroup} onClose={() => setCreateGroup(false)} />}
       {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
       {forwardingMessage && <ForwardMessageModal message={forwardingMessage} channels={channels} people={people.filter((person) => person.id !== user.id)} onForward={forwardMessage} onClose={() => setForwardingMessage(null)} />}
