@@ -814,7 +814,7 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       title: `${sender.sender_name} in #${channel?.name || "group"}`,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `channel-${req.params.id}`,
-      url: "/"
+      url: `/?view=chat&channel=${req.params.id}`
     }).catch(console.error);
     res.status(201).json(result);
   } catch (error) { next(error); }
@@ -1042,7 +1042,7 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       title: sender.sender_name,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `direct-${req.auth.userId}`,
-      url: "/"
+      url: `/?view=chat&direct=${req.auth.userId}`
     }).catch(console.error);
     res.status(201).json(result);
   } catch (error) { next(error); }
