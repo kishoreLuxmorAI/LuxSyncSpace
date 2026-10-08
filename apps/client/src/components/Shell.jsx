@@ -31,6 +31,49 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(null);
   const searchRef = useRef();
+  const notificationsMenuRef = useRef();
+  const notificationsBtnRef = useRef();
+  const statusMenuRef = useRef();
+  const statusBtnRef = useRef();
+  const profileMenuRef = useRef();
+  const profileBtnRef = useRef();
+  const sidebarProfileBtnRef = useRef();
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (
+        notificationsOpen &&
+        notificationsMenuRef.current &&
+        !notificationsMenuRef.current.contains(event.target) &&
+        notificationsBtnRef.current &&
+        !notificationsBtnRef.current.contains(event.target)
+      ) {
+        setNotificationsOpen(false);
+      }
+      if (
+        statusOpen &&
+        statusMenuRef.current &&
+        !statusMenuRef.current.contains(event.target) &&
+        statusBtnRef.current &&
+        !statusBtnRef.current.contains(event.target)
+      ) {
+        setStatusOpen(false);
+      }
+      if (
+        profileOpen &&
+        profileMenuRef.current &&
+        !profileMenuRef.current.contains(event.target) &&
+        profileBtnRef.current &&
+        !profileBtnRef.current.contains(event.target) &&
+        sidebarProfileBtnRef.current &&
+        !sidebarProfileBtnRef.current.contains(event.target)
+      ) {
+        setProfileOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [notificationsOpen, statusOpen, profileOpen]);
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults(null); return; }
@@ -47,6 +90,7 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
     window.addEventListener("keydown", handle);
     return () => window.removeEventListener("keydown", handle);
   }, []);
+
 
   function navigate(view) {
     setActive(view);
@@ -83,7 +127,7 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
           <button className={active === "settings" ? "active" : ""} onClick={() => navigate("settings")}><Settings size={19} /><span>Settings</span></button>
           <button className={active === "help" ? "active" : ""} onClick={() => navigate("help")}><CircleHelp size={19} /><span>Help & support</span></button>
         </nav>
-        <button className="sidebar-user" onClick={() => { setStatusOpen(false); setNotificationsOpen(false); setProfileOpen(!profileOpen); }}>
+        <button ref={sidebarProfileBtnRef} className="sidebar-user" onClick={() => { setStatusOpen(false); setNotificationsOpen(false); setProfileOpen(!profileOpen); }}>
           <Avatar person={user} showPresence />
           <span><b>{user.full_name}</b><small>{user.title}</small></span>
           <ChevronDown size={16} />
@@ -99,19 +143,19 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
             {results && <SearchResults results={results} onNavigate={navigate} onClose={() => { setQuery(""); setResults(null); }} />}
           </div>
           <div className="top-actions">
-            <button className="availability-button" onClick={() => { setNotificationsOpen(false); setProfileOpen(false); setStatusOpen((open) => !open); }} title="Change your status" aria-label="Change your status" aria-expanded={statusOpen}>
+            <button ref={statusBtnRef} className="availability-button" onClick={() => { setNotificationsOpen(false); setProfileOpen(false); setStatusOpen((open) => !open); }} title="Change your status" aria-label="Change your status" aria-expanded={statusOpen}>
               <i className={`availability-dot status-${user.availability_status || user.presence || "offline"}`} /><span>{availabilityOptions.find(([value]) => value === (user.availability_status || user.presence))?.[1] || "Offline"}</span><ChevronDown size={14} />
             </button>
-            <button className="icon-button notification-button" onClick={toggleNotifications} title="Notifications" aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell size={20} />{notifications.some((item) => item.unread) && <i />}</button>
-            <button className="top-user" onClick={() => { setNotificationsOpen(false); setStatusOpen(false); setProfileOpen(!profileOpen); }}><Avatar person={user} size="sm" /><ChevronDown size={15} /></button>
+            <button ref={notificationsBtnRef} className="icon-button notification-button" onClick={toggleNotifications} title="Notifications" aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell size={20} />{notifications.some((item) => item.unread) && <i />}</button>
+            <button ref={profileBtnRef} className="top-user" onClick={() => { setNotificationsOpen(false); setStatusOpen(false); setProfileOpen(!profileOpen); }}><Avatar person={user} size="sm" /><ChevronDown size={15} /></button>
           </div>
-          {statusOpen && <div className="availability-menu">
+          {statusOpen && <div ref={statusMenuRef} className="availability-menu">
             <header><b>Set your status</b><small>Let coworkers know when you are available.</small></header>
             {availabilityOptions.map(([value, label]) => <button key={value} onClick={async () => { await onStatusChange?.(value); setStatusOpen(false); }}>
               <i className={`availability-dot status-${value}`} /><span>{label}</span>{(user.availability_status || user.presence) === value && <Check size={15} />}
             </button>)}
           </div>}
-          {notificationsOpen && <div className="notification-menu">
+          {notificationsOpen && <div ref={notificationsMenuRef} className="notification-menu">
             <header><div><b>Notifications</b><small>{notifications.length ? `${notifications.length} recent` : "You’re all caught up"}</small></div>{notifications.length > 0 && <span><CheckCheck size={15} /> Read</span>}</header>
             <div className="notification-menu-list">
               {notifications.map((item) => <button key={item.id} onClick={() => { onNotificationOpen?.(item); setNotificationsOpen(false); }}>
@@ -122,7 +166,7 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
             </div>
           </div>}
           {profileOpen && (
-            <div className="profile-menu">
+            <div ref={profileMenuRef} className="profile-menu">
               <div><Avatar person={user} /><span><b>{user.full_name}</b><small>{user.email}</small></span></div>
               <button className="profile-link" onClick={() => { navigate("settings"); setProfileOpen(false); }}>View profile & settings</button>
               <button onClick={onLogout}>Sign out</button>
