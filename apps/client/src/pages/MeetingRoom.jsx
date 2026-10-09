@@ -24,7 +24,7 @@ const VIDEO_CONSTRAINTS = {
   frameRate: { ideal: 15, max: 20 }
 };
 
-export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
+export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onEndMeeting, onToast }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
   const isOrganizer = meeting.organizer_id === user.id;
   const [participants, setParticipants] = useState([]);
@@ -42,6 +42,7 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
   const [elapsed, setElapsed] = useState("00:00");
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [invitedUsers, setInvitedUsers] = useState(new Set());
   const localVideoRef = useRef();
   const localStreamRef = useRef();
   const displayStreamRef = useRef();
@@ -385,8 +386,41 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
           {allParticipants.map((participant) => <VideoTile participant={participant} key={participant.socketId} localVideoRef={participant.local ? localVideoRef : null} cameraOn={participant.local ? cameraOn : true} speakerOn={speakerOn} />)}
         </section>
         {panel && <aside className="meeting-panel">
-          <header><div><b>{panel === "people" ? "Participants" : "Meeting chat"}</b><small>{allParticipants.length} in this meeting</small></div><button onClick={() => setPanel(null)}><X size={18} /></button></header>
-          {panel === "people" ? <div className="meeting-people">
+          <header><div><b>{panel === "people" ? "Participants" : panel === "invite" ? "Invite people" : "Meeting chat"}</b><small>{allParticipants.length} in this meeting</small></div><button onClick={() => setPanel(null)}><X size={18} /></button></header>
+          {panel === "invite" ? <div className="meeting-people">
+            <button className="button button-secondary meeting-invite-people-btn" onClick={() => setPanel("people")} style={{ width: "100%", marginBottom: "1rem" }}>
+              Back to participants
+            </button>
+            <div className="invite-list" style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              {people.filter((p) => p.id !== user.id && !allParticipants.some((ap) => ap.user?.id === p.id)).map((person) => (
+                <div key={person.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.5rem", background: "var(--layer-2)", borderRadius: "var(--radius-sm)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                    <span style={{ "--participant": person.avatar_color, width: 32, height: 32, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 13, background: "var(--participant)" }}>{person.initials}</span>
+                    <div style={{ display: "flex", flexDirection: "column" }}><b style={{ fontSize: "0.85rem" }}>{person.full_name}</b><small style={{ fontSize: "0.7rem", opacity: 0.7 }}>{person.title}</small></div>
+                  </div>
+                  {invitedUsers.has(person.id) ? (
+                    <span style={{ fontSize: "0.8rem", opacity: 0.7, padding: "0.25rem 0.5rem" }}>Invite sent</span>
+                  ) : (
+                    <button className="button button-primary" style={{ padding: "0.25rem 0.75rem", fontSize: "0.8rem", height: "auto" }} onClick={() => { 
+                      onInvite([person.id]); 
+                      setInvitedUsers((prev) => new Set([...prev, person.id]));
+                      setTimeout(() => {
+                        setInvitedUsers((prev) => {
+                          const next = new Set(prev);
+                          next.delete(person.id);
+                          return next;
+                        });
+                      }, 10000);
+                    }}>Invite</button>
+                  )}
+                </div>
+              ))}
+              {people.filter((p) => p.id !== user.id && !allParticipants.some((ap) => ap.user?.id === p.id)).length === 0 && <p style={{ fontSize: "0.85rem", opacity: 0.7, textAlign: "center", padding: "2rem 0" }}>Everyone is already in the meeting.</p>}
+            </div>
+          </div> : panel === "people" ? <div className="meeting-people">
+            <button className="button button-secondary meeting-invite-people-btn" onClick={() => setPanel("invite")} style={{ width: "100%", marginBottom: "1rem" }}>
+              Invite people
+            </button>
             {allParticipants.map((participant) => <div key={participant.socketId}><span style={{ "--participant": participant.user?.avatar_color }}>{participant.user?.initials}</span><div><b>{participant.user?.full_name}{participant.local ? " (You)" : ""}</b><small>{participant.user?.title}</small></div>{participant.raised && <Hand size={17} />}</div>)}
           </div> : <><div className="meeting-chat">
             {chat.map((item) => <article key={item.id} className={item.sender_id === user.id ? "mine" : ""}><header><b>{item.sender_name}</b><time>{new Date(item.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></header><p>{item.body}</p></article>)}
