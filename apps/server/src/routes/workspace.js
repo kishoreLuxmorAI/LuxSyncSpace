@@ -332,7 +332,7 @@ async function shareMeetingInvitation({ req, event, recipientIds, organizer, isC
         : `Meeting invitation from ${organizer.full_name}`,
       body: event.title,
       tag: `${isCall ? "call" : "meeting-invite"}-${event.id}`,
-      url: `/?meeting=${event.id}`,
+      url: isCall ? `/?meeting=${event.id}` : `/?view=chat&direct=${req.auth.userId}`,
       ...(isCall ? {
         type: "call",
         meetingId: event.id,
@@ -1208,18 +1208,25 @@ workspaceRouter.post("/events/:eventId/attendees", async (req, res, next) => {
     ` : [];
     const existingIds = new Set(existing.map((attendee) => attendee.user_id));
     const newAttendeeIds = requestedIds.filter((id) => !existingIds.has(id));
-    if (!newAttendeeIds.length) return res.json({ added: 0, message: "Everyone selected is already invited" });
 
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${eventId}, attendee_id, 'accepted'
-      FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
+    if (newAttendeeIds.length) {
+      await sql`
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT ${eventId}, attendee_id, 'accepted'
+        FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
     const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds: newAttendeeIds, organizer });
+    
+    // Always share the invitation to requested users to allow re-pinging
+    if (requestedIds.length) {
+      await shareMeetingInvitation({ req, event, recipientIds: requestedIds, organizer });
+    }
+    
     invalidateCache(`events:${req.auth.organizationId}`);
-    res.json({ added: newAttendeeIds.length, message: `${newAttendeeIds.length} ${newAttendeeIds.length === 1 ? "person" : "people"} added and invited` });
+    res.json({ added: newAttendeeIds.length, message: `Invitation sent to ${requestedIds.length} ${requestedIds.length === 1 ? "person" : "people"}` });
   } catch (error) { next(error); }
 });
 

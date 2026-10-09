@@ -46,7 +46,7 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
         message.body || `Shared ${message.file_name || "a file"}`,
         `direct-${message.sender_id}`,
         isMeetingInvitation ? "meeting" : "message",
-        isMeetingInvitation ? "calendar" : "chat"
+        "chat"
       );
     });
     socket.on("channel:message", (message) => {
