@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CalendarPlus, Check, Search, Send, Video } from "lucide-react";
+import { CalendarPlus, Check, MapPin, Search, Send } from "lucide-react";
 import { Modal } from "./Modal";
 import { Avatar } from "./Avatar";
 
@@ -12,7 +12,7 @@ export function NewEvent({ people, onSave, onClose }) {
   const initialStart = new Date(); initialStart.setMinutes(0, 0, 0); initialStart.setHours(initialStart.getHours() + 1);
   const initialEnd = new Date(initialStart.getTime() + 60 * 60 * 1000);
   const [form, setForm] = useState({
-    title: "", description: "", location: "LuxSyncspace meeting",
+    title: "", description: "", location: "",
     startsAt: localInput(initialStart), endsAt: localInput(initialEnd), attendeeIds: []
   });
   const [busy, setBusy] = useState(false);
@@ -25,7 +25,7 @@ export function NewEvent({ people, onSave, onClose }) {
     event.preventDefault();
     setBusy(true);
     try {
-      await onSave({ ...form, startsAt: new Date(form.startsAt).toISOString(), endsAt: new Date(form.endsAt).toISOString() });
+      await onSave({ ...form, location: form.location.trim() || "LuxSyncspace meeting", startsAt: new Date(form.startsAt).toISOString(), endsAt: new Date(form.endsAt).toISOString() });
     } finally { setBusy(false); }
   }
 
@@ -37,7 +37,7 @@ export function NewEvent({ people, onSave, onClose }) {
           <label><span>Starts</span><input type="datetime-local" value={form.startsAt} onChange={(e) => update("startsAt", e.target.value)} required /></label>
           <label><span>Ends</span><input type="datetime-local" value={form.endsAt} onChange={(e) => update("endsAt", e.target.value)} required /></label>
         </div>
-        <label><span>Location</span><div className="input-icon"><Video size={17} /><input value={form.location} onChange={(e) => update("location", e.target.value)} /></div></label>
+        <label><span>Location</span><div className="input-icon"><MapPin size={17} /><input value={form.location} onChange={(e) => update("location", e.target.value)} placeholder="Event location" /></div></label>
         <div className="group-members-field">
           <div className="group-members-label"><span>Invite employees</span><small>{form.attendeeIds.length} selected</small></div>
           <label className="group-member-search"><Search size={16} /><input value={attendeeQuery} onChange={(event) => setAttendeeQuery(event.target.value)} placeholder="Search employees" /></label>
