@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Bell, CalendarDays, Check, CheckCheck, ChevronDown, CircleHelp, Command, LayoutDashboard,
+  Bell, CalendarDays, Check, CheckCheck, ChevronDown, CircleHelp, LayoutDashboard,
   Menu, MessageSquareText, Search, Settings, Users, Video, X
 } from "lucide-react";
 import { Avatar } from "./Avatar";
@@ -139,7 +139,6 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
           <div className="global-search">
             <Search size={18} />
             <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people, messages, and channels" />
-            <kbd><Command size={12} /> K</kbd>
             {results && <SearchResults results={results} onNavigate={navigate} onClose={() => { setQuery(""); setResults(null); }} />}
           </div>
           <div className="top-actions">
