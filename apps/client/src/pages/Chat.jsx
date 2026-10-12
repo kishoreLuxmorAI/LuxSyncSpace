@@ -21,7 +21,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
-  const [chatInfoOpen, setChatInfoOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -101,35 +100,35 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   }, [selected, selectedPerson?.id]);
 
   useEffect(() => {
-  function handleClickOutside(event) {
-    if (
-      emojiPickerRef.current &&
-      !emojiPickerRef.current.contains(event.target)
-    ) {
-      setEmojiOpen(false);
-    }
-
-    if (
-      messageMenuRef.current &&
-      !messageMenuRef.current.contains(target)
+    function handleClickOutside(event) {
+      if (
+        emojiPickerRef.current &&
+        !emojiPickerRef.current.contains(event.target)
       ) {
-       setMessageMenuId(null);
+        setEmojiOpen(false);
+      }
+
+      if (
+        messageMenuRef.current &&
+        !messageMenuRef.current.contains(target)
+      ) {
+        setMessageMenuId(null);
+      }
+
+      if (
+        reactionPickerRef.current &&
+        !reactionPickerRef.current.contains(event.target)
+      ) {
+        setReactionMessageId(null);
+      }
     }
 
-    if (
-      reactionPickerRef.current &&
-      !reactionPickerRef.current.contains(event.target)
-    ) {
-      setReactionMessageId(null);
-    }
-  }
+    document.addEventListener("mousedown", handleClickOutside);
 
-  document.addEventListener("mousedown", handleClickOutside);
-
-  return () => {
-    document.removeEventListener("mousedown", handleClickOutside);
-  };
-}, []);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -143,7 +142,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       if (document.visibilityState === "visible") {
         api(`/channels/${incoming.channel_id}/read`, { method: "POST" })
           .then(() => onConversationRead?.("channel", incoming.channel_id))
-          .catch(() => {});
+          .catch(() => { });
       }
     });
     socketRef.current.on("channel:read", (receipt) => {
@@ -190,7 +189,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       if (document.visibilityState === "visible") {
         api(`/direct/${incoming.sender_id}/read`, { method: "POST" })
           .then(() => onConversationRead?.("direct", incoming.sender_id))
-          .catch(() => {});
+          .catch(() => { });
       }
     });
     socketRef.current.on("direct:message-edited", (updated) => {
@@ -209,10 +208,12 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       setMessages((current) => current.map((item) => {
         if (item.id !== update.id) return item;
         const previous = new Map((item.reactions || []).map((reaction) => [reaction.emoji, reaction]));
-        return { ...item, reactions: update.reactions.map((reaction) => ({
-          ...reaction,
-          reacted_by_me: update.actorId === user.id ? reaction.emoji === update.userEmoji : Boolean(previous.get(reaction.emoji)?.reacted_by_me)
-        })) };
+        return {
+          ...item, reactions: update.reactions.map((reaction) => ({
+            ...reaction,
+            reacted_by_me: update.actorId === user.id ? reaction.emoji === update.userEmoji : Boolean(previous.get(reaction.emoji)?.reacted_by_me)
+          }))
+        };
       }));
     });
     return () => {
@@ -241,12 +242,12 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       if (document.visibilityState === "visible" && selectedChannelRef.current) {
         api(`/channels/${selectedChannelRef.current}/read`, { method: "POST" })
           .then(() => onConversationRead?.("channel", selectedChannelRef.current))
-          .catch(() => {});
+          .catch(() => { });
       }
       if (document.visibilityState === "visible" && selectedPersonRef.current) {
         api(`/direct/${selectedPersonRef.current.id}/read`, { method: "POST" })
           .then(() => onConversationRead?.("direct", selectedPersonRef.current.id))
-          .catch(() => {});
+          .catch(() => { });
       }
     };
     document.addEventListener("visibilitychange", markReadWhenVisible);
@@ -583,13 +584,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
               {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
               {selected && canCreateGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
-              <button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Bell size={19} /></button>
-              <button
-                 className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}
-                 onClick={() => setChatInfoOpen((open) => !open)}
-                 title="Chat information"
-                 aria-label="Chat information"
-                 ><Info size={19} /></button>
+              {!selectedPerson && <>
+                <button className="icon-button"><Bell size={19} /></button>
+                <button className="icon-button"><Info size={19} /></button>
+              </>}
             </div>
           </header>
           {selected && messageSearchOpen && <div className="conversation-search">
@@ -607,38 +605,38 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
               return <Fragment key={item.id}>
                 {startsNewDay && <div className="date-divider"><span>{messageDateLabel(item.sent_at)}</span></div>}
                 <div className={`chat-message ${grouped ? "grouped" : ""} ${mine ? "mine" : "theirs"}`}>
-                {!grouped && <Avatar person={{ initials: item.initials, avatar_color: item.avatar_color }} />}
-                <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}{item.edited_at ? " · edited" : ""}</time>{mine && selected && (item.seen_by_all
-                  ? <span className="message-sent-status seen" title="Seen by everyone" aria-label="Seen by everyone"><CheckCheck size={14} strokeWidth={2.5} /></span>
-                  : <span className="message-sent-status" title="Sent" aria-label="Sent"><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
-                  {item.forwarded_from_id && !item.deleted_at && <span className="forwarded-label"><Forward size={12} /> Forwarded</span>}
-                  {item.reply_to_id && !item.deleted_at && <div className="message-reply-preview"><b>{item.reply_sender_name || "Message"}</b><span>{item.reply_deleted_at ? "This message was deleted" : item.reply_body}</span></div>}
-                  {item.deleted_at ? <p className="deleted-message"><Trash2 size={14} /> This message was deleted</p> : item.body && <MessageBody body={item.body} />}
-                  {item.attachment_id && <button className="message-attachment" onClick={() => downloadAttachment(item)}>
-                    <span><FileText size={19} /></span><span><b>{item.file_name}</b><small>{formatFileSize(item.file_size)}</small></span><Download size={17} />
-                  </button>}
-                  {!!item.reactions?.length && !item.deleted_at && <div className="message-reactions">
-                    {item.reactions.map((reaction) => <button className={reaction.reacted_by_me ? "mine" : ""} onClick={() => reactToMessage(item, reaction.emoji)} key={reaction.emoji}><span>{reaction.emoji}</span><b>{reaction.count}</b></button>)}
-                  </div>}
-                </div>
-                <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>
-                {messageMenuId === item.id &&   <div
-                  ref={messageMenuRef}
+                  {!grouped && <Avatar person={{ initials: item.initials, avatar_color: item.avatar_color }} />}
+                  <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}{item.edited_at ? " · edited" : ""}</time>{mine && selected && (item.seen_by_all
+                    ? <span className="message-sent-status seen" title="Seen by everyone" aria-label="Seen by everyone"><CheckCheck size={14} strokeWidth={2.5} /></span>
+                    : <span className="message-sent-status" title="Sent" aria-label="Sent"><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
+                    {item.forwarded_from_id && !item.deleted_at && <span className="forwarded-label"><Forward size={12} /> Forwarded</span>}
+                    {item.reply_to_id && !item.deleted_at && <div className="message-reply-preview"><b>{item.reply_sender_name || "Message"}</b><span>{item.reply_deleted_at ? "This message was deleted" : item.reply_body}</span></div>}
+                    {item.deleted_at ? <p className="deleted-message"><Trash2 size={14} /> This message was deleted</p> : item.body && <MessageBody body={item.body} />}
+                    {item.attachment_id && <button className="message-attachment" onClick={() => downloadAttachment(item)}>
+                      <span><FileText size={19} /></span><span><b>{item.file_name}</b><small>{formatFileSize(item.file_size)}</small></span><Download size={17} />
+                    </button>}
+                    {!!item.reactions?.length && !item.deleted_at && <div className="message-reactions">
+                      {item.reactions.map((reaction) => <button className={reaction.reacted_by_me ? "mine" : ""} onClick={() => reactToMessage(item, reaction.emoji)} key={reaction.emoji}><span>{reaction.emoji}</span><b>{reaction.count}</b></button>)}
+                    </div>}
+                  </div>
+                  <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>
+                  {messageMenuId === item.id && <div
+                    ref={messageMenuRef}
                     className={`message-actions-menu ${mine ? "align-mine" : ""}`}
->
-                  {!item.deleted_at && <><button onClick={() => setReactionMessageId(reactionMessageId === item.id ? null : item.id)}><Smile size={16} /> React</button>
-                    <button onClick={() => replyToMessage(item)}><Reply size={16} /> Reply</button>
-                    <button onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button>
-                    {mine && item.body && <button onClick={() => editMessage(item)}><Pencil size={16} /> Edit</button>}</>}
-                  <button onClick={() => deleteMessage(item, "me")}><Trash2 size={16} /> Delete for me</button>
-                  {mine && !item.deleted_at && <button className="danger-menu-item" onClick={() => deleteMessage(item, "everyone")}><Trash2 size={16} /> Delete for everyone</button>}
-                </div>}
-                {/* #suraj */}
-                {reactionMessageId === item.id && <div
-    ref={reactionPickerRef}
-    className={`message-reaction-picker ${mine ? "align-mine" : ""}`}
-  >
-              <Picker data={data} onEmojiSelect={(emoji) => {reactToMessage(item, emoji.native); setReactionMessageId(null);  }}theme="light"/>                </div>}
+                  >
+                    {!item.deleted_at && <><button onClick={() => setReactionMessageId(reactionMessageId === item.id ? null : item.id)}><Smile size={16} /> React</button>
+                      <button onClick={() => replyToMessage(item)}><Reply size={16} /> Reply</button>
+                      <button onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button>
+                      {mine && item.body && <button onClick={() => editMessage(item)}><Pencil size={16} /> Edit</button>}</>}
+                    <button onClick={() => deleteMessage(item, "me")}><Trash2 size={16} /> Delete for me</button>
+                    {mine && !item.deleted_at && <button className="danger-menu-item" onClick={() => deleteMessage(item, "everyone")}><Trash2 size={16} /> Delete for everyone</button>}
+                  </div>}
+                  {/* #suraj */}
+                  {reactionMessageId === item.id && <div
+                    ref={reactionPickerRef}
+                    className={`message-reaction-picker ${mine ? "align-mine" : ""}`}
+                  >
+                    <Picker data={data} onEmojiSelect={(emoji) => { reactToMessage(item, emoji.native); setReactionMessageId(null); }} theme="light" />                </div>}
                 </div>
               </Fragment>;
             })}
@@ -657,15 +655,15 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
               <button type="button" className={uploading ? "tool-busy" : ""} onClick={() => fileInputRef.current?.click()} disabled={uploading} title="Attach a file"><Paperclip size={18} /></button>
               <button type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
             </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
-            {emojiOpen && 
-            <div
+            {emojiOpen &&
+              <div
                 ref={emojiPickerRef}
                 className="emoji-picker"
                 role="dialog"
-               aria-label="Choose an emoji"
+                aria-label="Choose an emoji"
               >
-              <header><b>Choose an emoji</b><button type="button" onClick={() => setEmojiOpen(false)}><X size={15} /></button></header>
-            <Picker data={data} onEmojiSelect={(emoji) => insertEmoji(emoji.native)} theme="light" />            
+                <header><b>Choose an emoji</b><button type="button" onClick={() => setEmojiOpen(false)}><X size={15} /></button></header>
+                <Picker data={data} onEmojiSelect={(emoji) => insertEmoji(emoji.native)} theme="light" />
               </div>}
           </form>
         </section>
@@ -690,13 +688,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
         <div className="details-members">{channelMembers.slice(0, 6).map((person) => <div key={person.id}><Avatar person={person} size="xs" showPresence /><span><b>{person.full_name}</b><small>{person.title}</small></span></div>)}</div>
         {canCreateGroup && <button className="button button-secondary manage-members-button" onClick={() => setManageMembers(true)}><UserPlus size={16} /> Manage members</button>}
       </aside>}
-      {selectedPerson && chatInfoOpen && (
-         <aside className="chat-details">
-         <Avatar person={selectedPerson} showPresence />
-         <h3>{selectedPerson.full_name}</h3>
-         <p>{selectedPerson.title} · {selectedPerson.department}</p>
-        </aside>
-          )}
       {createGroup && <CreateGroup people={people.filter((person) => person.id !== user.id)} onCreate={submitGroup} onClose={() => setCreateGroup(false)} />}
       {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
       {forwardingMessage && <ForwardMessageModal message={forwardingMessage} channels={channels} people={people.filter((person) => person.id !== user.id)} onForward={forwardMessage} onClose={() => setForwardingMessage(null)} />}
