@@ -734,10 +734,35 @@ function messageDateLabel(value) {
 
 function MessageBody({ body }) {
   const parts = body.split(/(https?:\/\/[^\s]+)/g);
-  return <p>{parts.map((part, index) => /^https?:\/\//.test(part)
-    ? <a className="message-link" href={part} key={`${part}-${index}`}>{part}</a>
-    : part
-  )}</p>;
+  return <p>{parts.map((part, index) => {
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a
+          className="message-link"
+          href={part}
+          key={`${part}-${index}`}
+          onClick={(event) => {
+            try {
+              const url = new URL(part, window.location.origin);
+              const mId = url.searchParams.get("meeting");
+              if (mId) {
+                event.preventDefault();
+                const nextUrl = new URL(window.location.href);
+                nextUrl.searchParams.delete("channel");
+                nextUrl.searchParams.delete("direct");
+                nextUrl.searchParams.set("meeting", mId);
+                window.history.pushState({ luxsyncspace: true, meetingId: mId }, "", nextUrl);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }
+            } catch { }
+          }}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  })}</p>;
 }
 
 function ForwardMessageModal({ message, channels, people, onForward, onClose }) {

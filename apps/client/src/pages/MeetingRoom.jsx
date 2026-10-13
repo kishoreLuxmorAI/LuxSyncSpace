@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Copy, Expand, Hand, MessageSquareText, Mic, MicOff, MonitorUp, PhoneOff,
-  Send, Users, Video, VideoOff, Volume2, VolumeX, X
+  ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, MonitorUp, MoreHorizontal, MoreVertical, PhoneOff,
+  Send, Sparkles, Users, Video, VideoOff, Volume2, VolumeX, X
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, SOCKET_URL, socketOptions } from "../lib/api";
@@ -27,6 +27,11 @@ const VIDEO_CONSTRAINTS = {
 export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onEndMeeting, onToast }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
   const isOrganizer = meeting.organizer_id === user.id;
+  const [inLobby, setInLobby] = useState(true);
+  const [cameraBlocked, setCameraBlocked] = useState(false);
+  const [micDevice, setMicDevice] = useState("Microphone (Realtek(R) Audio)");
+  const [speakerDevice, setSpeakerDevice] = useState("Speakers (Realtek(R) Audio)");
+  const [cameraDevice, setCameraDevice] = useState("USB Camera");
   const [participants, setParticipants] = useState([]);
   const [localStream, setLocalStream] = useState(null);
   const [micOn, setMicOn] = useState(true);
@@ -44,6 +49,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const [ending, setEnding] = useState(false);
   const [invitedUsers, setInvitedUsers] = useState(new Set());
   const localVideoRef = useRef();
+  const lobbyVideoRef = useRef();
   const localStreamRef = useRef();
   const displayStreamRef = useRef();
   const socketRef = useRef();
@@ -61,16 +67,84 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     return () => window.clearTimeout(timer);
   }, [meetingChatPopup]);
 
+  // Elapsed meeting time only runs when inside the active meeting
   useEffect(() => {
+    if (inLobby) return;
     const startedAt = Date.now();
     const timer = setInterval(() => {
       const seconds = Math.floor((Date.now() - startedAt) / 1000);
       setElapsed(`${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`);
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [inLobby]);
+
+  // Initialize preview media and detect devices for the Lobby
+  useEffect(() => {
+    let disposed = false;
+    async function initPreview() {
+      try {
+        const meetingConfig = await api("/meetings/config").catch(() => null);
+        if (meetingConfig?.iceServers?.length) iceServersRef.current = meetingConfig.iceServers;
+      } catch { }
+
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: AUDIO_CONSTRAINTS,
+          video: isAudioOnly ? false : VIDEO_CONSTRAINTS
+        });
+        setCameraBlocked(false);
+      } catch (err) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS, video: false });
+          setCameraOn(false);
+          setCameraBlocked(true);
+        } catch {
+          setMicOn(false);
+          setCameraOn(false);
+          setCameraBlocked(true);
+        }
+      }
+      if (disposed) {
+        stream?.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      localStreamRef.current = stream;
+      stream?.getAudioTracks().forEach((track) => {
+        track.contentHint = "speech";
+        track.enabled = micOn;
+      });
+      stream?.getVideoTracks().forEach((track) => {
+        track.enabled = cameraOn;
+      });
+      setLocalStream(stream);
+
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter((d) => d.kind === "audioinput" && d.label);
+        const speakers = devices.filter((d) => d.kind === "audiooutput" && d.label);
+        const cameras = devices.filter((d) => d.kind === "videoinput" && d.label);
+        if (mics.length) setMicDevice(mics[0].label);
+        if (speakers.length) setSpeakerDevice(speakers[0].label);
+        if (cameras.length) setCameraDevice(cameras[0].label);
+      } catch { }
+    }
+
+    initPreview();
+    return () => {
+      disposed = true;
+    };
+  }, [meeting.id]);
+
+  // Keep lobby video attached to local stream
+  useEffect(() => {
+    if (inLobby && lobbyVideoRef.current && localStream) {
+      lobbyVideoRef.current.srcObject = localStream;
+    }
+  }, [inLobby, localStream, cameraOn, cameraBlocked]);
 
   useEffect(() => {
+    if (inLobby) return;
     let disposed = false;
 
     function upsertParticipant(socketId, values) {
@@ -192,18 +266,20 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       } catch {
         // The safe default still supports most peer-to-peer connections.
       }
-      let stream = null;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS, video: isAudioOnly ? false : VIDEO_CONSTRAINTS });
-      } catch {
+      let stream = localStreamRef.current;
+      if (!stream) {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS, video: false });
-          setCameraOn(false);
-          onToast("Camera unavailable. Joined with microphone only.");
+          stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS, video: isAudioOnly ? false : VIDEO_CONSTRAINTS });
         } catch {
-          setMicOn(false);
-          setCameraOn(false);
-          onToast("Camera and microphone access is blocked. You can still join and view the meeting.");
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS, video: false });
+            setCameraOn(false);
+            onToast("Camera unavailable. Joined with microphone only.");
+          } catch {
+            setMicOn(false);
+            setCameraOn(false);
+            onToast("Camera and microphone access is blocked. You can still join and view the meeting.");
+          }
         }
       }
       if (disposed) {
@@ -211,7 +287,13 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
         return;
       }
       localStreamRef.current = stream;
-      stream?.getAudioTracks().forEach((track) => { track.contentHint = "speech"; });
+      stream?.getAudioTracks().forEach((track) => {
+        track.contentHint = "speech";
+        track.enabled = micOn;
+      });
+      stream?.getVideoTracks().forEach((track) => {
+        track.enabled = cameraOn;
+      });
       setLocalStream(stream);
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
@@ -295,7 +377,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       pendingCandidatesRef.current.clear();
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
-  }, [meeting.id, user.id]);
+  }, [inLobby, meeting.id, user.id]);
 
   function toggleMic() {
     const next = !micOn;
@@ -303,10 +385,39 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     setMicOn(next);
   }
 
-  function toggleCamera() {
+  async function toggleCamera() {
+    if (isAudioOnly) return;
     const next = !cameraOn;
-    localStreamRef.current?.getVideoTracks().forEach((track) => { track.enabled = next; });
     setCameraOn(next);
+    if (!next) {
+      localStreamRef.current?.getVideoTracks().forEach((track) => { track.enabled = false; });
+    } else {
+      const currentTrack = localStreamRef.current?.getVideoTracks()[0];
+      if (currentTrack && currentTrack.readyState === "live") {
+        currentTrack.enabled = true;
+        setCameraBlocked(false);
+      } else {
+        try {
+          const videoStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
+          const newTrack = videoStream.getVideoTracks()[0];
+          if (newTrack) {
+            if (localStreamRef.current) {
+              localStreamRef.current.addTrack(newTrack);
+            } else {
+              localStreamRef.current = videoStream;
+              setLocalStream(videoStream);
+            }
+            if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
+            if (lobbyVideoRef.current) lobbyVideoRef.current.srcObject = localStreamRef.current;
+            setCameraBlocked(false);
+          }
+        } catch {
+          setCameraOn(false);
+          setCameraBlocked(true);
+          onToast("Camera access is blocked or unavailable");
+        }
+      }
+    }
   }
 
   async function shareScreen() {
@@ -374,6 +485,132 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   }
 
   const allParticipants = [{ socketId: "local", user, stream: localStream, raised, local: true }, ...participants];
+
+  if (inLobby) {
+    const hasActiveVideo = cameraOn && !cameraBlocked && localStream && localStream.getVideoTracks().some((t) => t.enabled);
+    return (
+      <div className="meeting-lobby">
+        <header className="lobby-header">
+          <div className="lobby-brand">
+            <img src="/icons/luxsyncspace-192.png" alt="" />
+            <span>LuxSyncspace</span>
+          </div>
+          <button
+            className="icon-button"
+            onClick={() => {
+              localStreamRef.current?.getTracks().forEach((t) => t.stop());
+              onLeave();
+            }}
+            title="Leave"
+            aria-label="Leave"
+          >
+            <X size={20} />
+          </button>
+        </header>
+
+        <main className="lobby-container">
+          <div className="lobby-preview-wrapper">
+            <div className="lobby-preview-box">
+              <div className="lobby-preview-header">
+                <span className="lobby-user-label">{user.full_name?.toUpperCase() || "YOU"}</span>
+                <button className="lobby-preview-menu-btn" title="More options" type="button" aria-label="More options">
+                  <MoreVertical size={18} />
+                </button>
+              </div>
+
+              {hasActiveVideo ? (
+                <video ref={lobbyVideoRef} autoPlay playsInline muted />
+              ) : (
+                <div className="lobby-blocked-prompt">
+                  <div className="lobby-warning-icon">!</div>
+                  <h3>{cameraBlocked ? "Camera might be blocked" : "Camera is off"}</h3>
+                  <p>
+                    {cameraBlocked
+                      ? "Check your camera's privacy switch and remove anything that is covering the camera lens"
+                      : "Your camera is turned off. Click the camera icon below to turn it on."}
+                  </p>
+                </div>
+              )}
+
+              <div className="lobby-preview-controls">
+                <button className="lobby-preview-sub-btn" title="Audio & video settings" type="button" aria-label="Audio & video settings">
+                  <MoreHorizontal size={18} />
+                </button>
+
+                <div className="lobby-preview-center-controls">
+                  <button
+                    type="button"
+                    className={`lobby-control-btn ${!micOn ? "off" : ""}`}
+                    onClick={toggleMic}
+                    title={micOn ? "Turn off microphone" : "Turn on microphone"}
+                    aria-label={micOn ? "Turn off microphone" : "Turn on microphone"}
+                  >
+                    {micOn ? <Mic size={20} /> : <><MicOff size={20} /><span className="lobby-badge-warning">!</span></>}
+                  </button>
+                  <button
+                    type="button"
+                    className={`lobby-control-btn ${!cameraOn || cameraBlocked ? "off" : ""}`}
+                    onClick={toggleCamera}
+                    title={cameraOn ? "Turn off camera" : "Turn on camera"}
+                    aria-label={cameraOn ? "Turn off camera" : "Turn on camera"}
+                  >
+                    {cameraOn && !cameraBlocked ? <Video size={20} /> : <><VideoOff size={20} /><span className="lobby-badge-warning">!</span></>}
+                  </button>
+                </div>
+
+                <button className="lobby-preview-sub-btn" title="Apply visual effects" type="button" aria-label="Apply visual effects">
+                  <Sparkles size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="lobby-device-selectors">
+              <button className="lobby-device-pill" type="button" title={micDevice}>
+                <Mic size={14} />
+                <span>{micDevice}</span>
+                <ChevronDown size={14} />
+              </button>
+              <button className="lobby-device-pill" type="button" title={speakerDevice}>
+                <Volume2 size={14} />
+                <span>{speakerDevice}</span>
+                <ChevronDown size={14} />
+              </button>
+              <button className="lobby-device-pill" type="button" title={cameraDevice}>
+                <Video size={14} />
+                <span>{cameraDevice}</span>
+                <ChevronDown size={14} />
+              </button>
+            </div>
+          </div>
+
+          <div className="lobby-action-card">
+            <h1 className="lobby-title">Ready to join?</h1>
+            <p className="lobby-subtitle">No one else is here</p>
+
+            <div className="lobby-join-wrapper">
+              {(!cameraOn || !micOn || cameraBlocked) && (
+                <span className="lobby-join-warning-badge">!</span>
+              )}
+              <button className="lobby-join-btn" onClick={() => setInLobby(false)} type="button">
+                Join now
+              </button>
+            </div>
+
+            <button
+              className="lobby-secondary-btn"
+              onClick={() => {
+                localStreamRef.current?.getTracks().forEach((t) => t.stop());
+                onLeave();
+              }}
+              type="button"
+            >
+              Other ways to join <ChevronDown size={14} />
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className={`meeting-room ${isAudioOnly ? "audio-call" : "video-call"}`}>
