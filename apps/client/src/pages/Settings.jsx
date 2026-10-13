@@ -78,6 +78,13 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   }, [user.display_name, user.hide_full_name, user.hide_email]);
 
   useEffect(() => {
+    if (selected && people) {
+      const updated = people.find((p) => p.id === selected.id);
+      if (updated) setSelected(updated);
+    }
+  }, [people]);
+
+  useEffect(() => {
     if (tab !== "password-resets" || !isAdministrator) return;
     loadResetRequests();
   }, [tab, isAdministrator]);
@@ -183,7 +190,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
       title: person.title || "",
       department: person.department || "",
       role: person.role || "employee",
-      phone: person.phone || "",
+      phone: (person.phone || "").replace(/\D/g, "").slice(0, 10),
       location: person.location || "",
       managerId: person.manager_id || "",
       joinedAt: person.joined_at ? String(person.joined_at).slice(0, 10) : new Date().toISOString().slice(0, 10),
@@ -198,6 +205,9 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
       const result = await api(`/employees/${selected.id}`, { method: "PATCH", body: JSON.stringify(editing) });
       setSelected(result.employee);
       setEditing(null);
+      if (onUserUpdate && (selected.id === user.id || result.employee?.id === user.id)) {
+        onUserUpdate(result.employee);
+      }
       await onRefresh();
       onToast(result.message || "Employee details updated");
     } catch (error) { onToast(error.message); }
@@ -274,8 +284,8 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
               <label><span>Employee ID</span><input value={invite.employeeId} onChange={(e) => setInvite({ ...invite, employeeId: e.target.value.toUpperCase() })} placeholder="e.g. LUX-1002 (leave blank to generate automatically)" pattern="[A-Za-z0-9-]{3,30}" /></label>
               <label><span>Designation</span><input value={invite.title} onChange={(e) => setInvite({ ...invite, title: e.target.value })} placeholder="e.g. Software Engineer" required /></label>
               <div className="form-grid"><label><span>Department</span><input value={invite.department} onChange={(e) => setInvite({ ...invite, department: e.target.value })} required /></label><label><span>Access role</span><select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr">HR</option></select></label></div>
-              <div className="form-grid"><label><span>Phone number</span><input type="tel" value={invite.phone} onChange={(e) => setInvite({ ...invite, phone: e.target.value })} placeholder="+91 98765 43210" /></label><label><span>Work location</span><input value={invite.location} onChange={(e) => setInvite({ ...invite, location: e.target.value })} placeholder="e.g. Hyderabad, India" /></label></div>
-              <div className="form-grid"><label><span>Reporting manager</span><select value={invite.managerId} onChange={(e) => setInvite({ ...invite, managerId: e.target.value })}><option value="">Not assigned</option>{people.map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={invite.joinedAt} onChange={(e) => setInvite({ ...invite, joinedAt: e.target.value })} max={today} required /></label></div>
+              <div className="form-grid"><label><span>Phone number</span><input type="tel" inputMode="numeric" value={invite.phone} onChange={(e) => setInvite({ ...invite, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="10-digit mobile number" maxLength={10} pattern="\d{10}" title="Please enter a 10-digit phone number" /></label><label><span>Work location</span><input value={invite.location} onChange={(e) => setInvite({ ...invite, location: e.target.value })} placeholder="e.g. Hyderabad, India" /></label></div>
+              <div className="form-grid"><label><span>Reporting manager</span><select value={invite.managerId} onChange={(e) => setInvite({ ...invite, managerId: e.target.value })}><option value="">Not assigned</option>{people.map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={invite.joinedAt} onChange={(e) => setInvite({ ...invite, joinedAt: e.target.value })} required /></label></div>
               <label><span>Employee profile summary</span><textarea value={invite.bio} onChange={(e) => setInvite({ ...invite, bio: e.target.value })} placeholder="Add responsibilities, expertise, or a short professional introduction…" maxLength={1000} /></label>
               <div className="email-delivery-note"><ShieldCheck size={18} /><span><b>Secure email delivery</b><small>The employee will receive their email as username and a generated temporary password. They must replace it after signing in.</small></span></div>
               <button className="button button-primary" disabled={busy}><Send size={17} /> {busy ? "Creating account and sending…" : "Send employee invitation"}</button>
@@ -336,15 +346,15 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
         </section>
       </div>
       {selected && !editing && !pendingDelete && <Modal title="Employee profile" subtitle={selected.employee_id} onClose={() => setSelected(null)}><div className="profile-modal"><ProfileDetails person={selected} />{(canEditEmployee(selected) || canDeleteEmployee(selected)) && <div className="employee-profile-actions">{canDeleteEmployee(selected) && <button className="button button-danger" onClick={() => setPendingDelete(selected)}><UserX size={16} /> Delete employee</button>}{canEditEmployee(selected) && <button className="button button-primary" onClick={() => startEditing(selected)}><Pencil size={16} /> Edit details</button>}</div>}</div></Modal>}
-      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => { setEditing(null); setSelected(null); }}>
+      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => setEditing(null)}>
         <form className="event-form" onSubmit={updateEmployee}>
           <div className="form-grid"><label><span>Employee name</span><input value={editing.fullName} onChange={(e) => setEditing({ ...editing, fullName: e.target.value })} required /></label><label><span>Work email</span><input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} required /></label></div>
           <div className="form-grid"><label><span>Employee ID</span><input value={editing.employeeId} onChange={(e) => setEditing({ ...editing, employeeId: e.target.value.toUpperCase() })} pattern="[A-Za-z0-9-]{3,30}" required /></label><label><span>Designation</span><input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} required /></label></div>
           <div className="form-grid"><label><span>Department</span><input value={editing.department} onChange={(e) => setEditing({ ...editing, department: e.target.value })} required /></label><label><span>Access role</span><select value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr" disabled={user.role === "manager"}>HR</option>{user.role === "senior_leader" && <option value="senior_leader">Senior leader</option>}</select></label></div>
-          <div className="form-grid"><label><span>Phone number</span><input type="tel" value={editing.phone} onChange={(e) => setEditing({ ...editing, phone: e.target.value })} /></label><label><span>Work location</span><input value={editing.location} onChange={(e) => setEditing({ ...editing, location: e.target.value })} /></label></div>
-          <div className="form-grid"><label><span>Reporting manager</span><select value={editing.managerId} onChange={(e) => setEditing({ ...editing, managerId: e.target.value })}><option value="">Not assigned</option>{people.filter((person) => person.id !== selected.id).map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={editing.joinedAt} onChange={(e) => setEditing({ ...editing, joinedAt: e.target.value })} max={today} required /></label></div>
+          <div className="form-grid"><label><span>Phone number</span><input type="tel" inputMode="numeric" value={editing.phone} onChange={(e) => setEditing({ ...editing, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="10-digit mobile number" maxLength={10} pattern="\d{10}" title="Please enter a 10-digit phone number" /></label><label><span>Work location</span><input value={editing.location} onChange={(e) => setEditing({ ...editing, location: e.target.value })} /></label></div>
+          <div className="form-grid"><label><span>Reporting manager</span><select value={editing.managerId} onChange={(e) => setEditing({ ...editing, managerId: e.target.value })}><option value="">Not assigned</option>{people.filter((person) => person.id !== selected.id).map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={editing.joinedAt} onChange={(e) => setEditing({ ...editing, joinedAt: e.target.value })} required /></label></div>
           <label><span>Employee profile summary</span><textarea value={editing.bio} onChange={(e) => setEditing({ ...editing, bio: e.target.value })} maxLength={1000} /></label>
-          <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => { setEditing(null); setSelected(null); }} disabled={busy}>Cancel</button><button className="button button-primary" disabled={busy}><Save size={16} /> {busy ? "Saving…" : "Save changes"}</button></div>
+          <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setEditing(null)} disabled={busy}>Cancel</button><button className="button button-primary" disabled={busy}><Save size={16} /> {busy ? "Saving…" : "Save changes"}</button></div>
         </form>
       </Modal>}
       {pendingDelete && <Modal title={`Delete ${pendingDelete.full_name}?`} subtitle="Employee account management" onClose={() => !busy && setPendingDelete(null)}>

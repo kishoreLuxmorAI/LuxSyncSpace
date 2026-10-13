@@ -332,7 +332,7 @@ async function shareMeetingInvitation({ req, event, recipientIds, organizer, isC
         : `Meeting invitation from ${organizer.full_name}`,
       body: event.title,
       tag: `${isCall ? "call" : "meeting-invite"}-${event.id}`,
-      url: isCall ? `/?meeting=${event.id}` : `/?view=chat&direct=${req.auth.userId}`,
+      url: `/?meeting=${event.id}`,
       ...(isCall ? {
         type: "call",
         meetingId: event.id,
@@ -513,7 +513,7 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
       title: z.string().trim().min(2).max(120),
       role: z.enum(["employee", "team_lead", "manager", "hr"]).default("employee"),
       department: z.string().trim().min(2).max(100),
-      phone: z.string().trim().max(40).default(""),
+      phone: z.string().trim().regex(/^(\d{10})?$/, "Phone must be empty or exactly 10 digits").default(""),
       location: z.string().trim().max(120).default(""),
       bio: z.string().trim().max(1000).default(""),
       managerId: z.union([z.string().uuid(), z.literal(""), z.null()]).default(""),
@@ -603,7 +603,7 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
       title: z.string().trim().min(2).max(120),
       role: z.enum(["employee", "team_lead", "manager", "hr", "senior_leader"]),
       department: z.string().trim().min(2).max(100),
-      phone: z.string().trim().max(40).default(""),
+      phone: z.string().trim().regex(/^(\d{10})?$/, "Phone must be empty or exactly 10 digits").default(""),
       location: z.string().trim().max(120).default(""),
       bio: z.string().trim().max(1000).default(""),
       managerId: z.union([z.string().uuid(), z.literal(""), z.null()]).default(""),
@@ -644,6 +644,7 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
       ? await sql`SELECT full_name AS manager_name FROM users WHERE id = ${employee.manager_id}`
       : [];
     invalidateCache(`people:${req.auth.organizationId}`, "socket-memberships:");
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("employee:status-updated");
     res.json({ employee: { ...employee, manager_name: manager?.manager_name || null }, message: "Employee details updated" });
   } catch (error) {
     if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
@@ -814,7 +815,7 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       title: `${sender.sender_name} in #${channel?.name || "group"}`,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `channel-${req.params.id}`,
-      url: `/?view=chat&channel=${req.params.id}`
+      url: "/"
     }).catch(console.error);
     res.status(201).json(result);
   } catch (error) { next(error); }
@@ -1042,7 +1043,7 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       title: sender.sender_name,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `direct-${req.auth.userId}`,
-      url: `/?view=chat&direct=${req.auth.userId}`
+      url: "/"
     }).catch(console.error);
     res.status(201).json(result);
   } catch (error) { next(error); }
@@ -1208,25 +1209,18 @@ workspaceRouter.post("/events/:eventId/attendees", async (req, res, next) => {
     ` : [];
     const existingIds = new Set(existing.map((attendee) => attendee.user_id));
     const newAttendeeIds = requestedIds.filter((id) => !existingIds.has(id));
+    if (!newAttendeeIds.length) return res.json({ added: 0, message: "Everyone selected is already invited" });
 
-    if (newAttendeeIds.length) {
-      await sql`
-        INSERT INTO event_attendees (event_id, user_id, response)
-        SELECT ${eventId}, attendee_id, 'accepted'
-        FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
-        ON CONFLICT DO NOTHING
-      `;
-    }
-
+    await sql`
+      INSERT INTO event_attendees (event_id, user_id, response)
+      SELECT ${eventId}, attendee_id, 'accepted'
+      FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
+      ON CONFLICT DO NOTHING
+    `;
     const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    
-    // Always share the invitation to requested users to allow re-pinging
-    if (requestedIds.length) {
-      await shareMeetingInvitation({ req, event, recipientIds: requestedIds, organizer });
-    }
-    
+    await shareMeetingInvitation({ req, event, recipientIds: newAttendeeIds, organizer });
     invalidateCache(`events:${req.auth.organizationId}`);
-    res.json({ added: newAttendeeIds.length, message: `Invitation sent to ${requestedIds.length} ${requestedIds.length === 1 ? "person" : "people"}` });
+    res.json({ added: newAttendeeIds.length, message: `${newAttendeeIds.length} ${newAttendeeIds.length === 1 ? "person" : "people"} added and invited` });
   } catch (error) { next(error); }
 });
 
