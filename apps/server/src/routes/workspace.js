@@ -517,7 +517,7 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
       location: z.string().trim().max(120).default(""),
       bio: z.string().trim().max(1000).default(""),
       managerId: z.union([z.string().uuid(), z.literal(""), z.null()]).default(""),
-      joinedAt: z.string().date()
+      joinedAt: z.string().date().refine((d) => d <= new Date().toISOString().slice(0, 10), { message: "Joining date cannot be in the future" })
     }).parse(req.body);
     const [existing] = await sql`SELECT id FROM users WHERE lower(email) = lower(${input.email})`;
     if (existing) return res.status(409).json({ error: "An employee with this email already exists" });
@@ -607,7 +607,7 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
       location: z.string().trim().max(120).default(""),
       bio: z.string().trim().max(1000).default(""),
       managerId: z.union([z.string().uuid(), z.literal(""), z.null()]).default(""),
-      joinedAt: z.string().date()
+      joinedAt: z.string().date().refine((d) => d <= new Date().toISOString().slice(0, 10), { message: "Joining date cannot be in the future" })
     }).parse(req.body);
 
     const [target] = await sql`

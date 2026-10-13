@@ -5,6 +5,8 @@ import { disableNotifications, enableNotifications, notificationsEnabled, notifi
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
 
+const today = new Date().toISOString().slice(0, 10);
+
 const emptyInvite = () => ({
   fullName: "",
   employeeId: "",
