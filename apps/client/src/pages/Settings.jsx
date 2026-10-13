@@ -17,7 +17,7 @@ const emptyInvite = () => ({
   managerId: "",
   joinedAt: new Date().toISOString().slice(0, 10),
   bio: ""
-});
+}); 
 
 function getInstallEnvironment() {
   const userAgent = window.navigator.userAgent || "";
