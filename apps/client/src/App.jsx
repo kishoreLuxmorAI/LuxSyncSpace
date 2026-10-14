@@ -29,6 +29,7 @@ export default function App() {
   });
   const [meetingId, setMeetingId] = useState(() => new URLSearchParams(window.location.search).get("meeting"));
   const [activeMeeting, setActiveMeeting] = useState(null);
+  const [skipMeetingLobby, setSkipMeetingLobby] = useState(false);
   const [loading, setLoading] = useState(Boolean(authStore.get()));
   const [newEvent, setNewEvent] = useState(false);
   const [toast, setToast] = useState("");
@@ -201,23 +202,29 @@ export default function App() {
     setTutorialOpen(false);
   }
 
-  function joinMeeting(event) {
+  function joinMeeting(event, { skipLobby = false } = {}) {
     const url = new URL(window.location.href);
     url.searchParams.delete("channel");
+    url.searchParams.delete("direct");
+    url.searchParams.delete("view");
     url.searchParams.set("meeting", event.id);
-    window.history.pushState({ luxsyncspace: true, view: active, meetingId: event.id }, "", url);
+    window.history.pushState({ luxsyncspace: true, meetingId: event.id }, "", url);
     setActiveMeeting(event);
     setMeetingId(event.id);
+    setSkipMeetingLobby(skipLobby);
   }
 
   function leaveMeeting() {
     const url = new URL(window.location.href);
     url.searchParams.delete("meeting");
+    url.searchParams.delete("channel");
+    url.searchParams.delete("direct");
     url.searchParams.set("view", "meetings");
     window.history.replaceState({ luxsyncspace: true, view: "meetings" }, "", url);
     setActive("meetings");
     setMeetingId(null);
     setActiveMeeting(null);
+    setSkipMeetingLobby(false);
     refreshWorkspace().catch(() => {});
   }
 
@@ -228,8 +235,9 @@ export default function App() {
   }
 
   async function startInstantMeeting(options = {}) {
+    let meeting;
     try {
-      const meeting = await api("/meetings/instant", {
+      meeting = await api("/meetings/instant", {
         method: "POST",
         body: JSON.stringify({
           title: options.title || `${user.full_name}'s meeting`,
@@ -238,9 +246,10 @@ export default function App() {
           isCall: Boolean(options.isCall)
         })
       });
-      await refreshWorkspace();
-      joinMeeting(meeting);
     } catch (error) { setToast(error.message); }
+    if (!meeting) return;
+    joinMeeting(meeting, { skipLobby: Boolean(options.isCall) });
+    refreshWorkspace().catch((error) => setToast(error.message));
   }
 
   async function startCall(person, mode) {
@@ -272,7 +281,16 @@ export default function App() {
   if (meetingId) {
     const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
     return <>
-      <MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onEndMeeting={endMeetingForEveryone} onToast={setToast} />
+      <MeetingRoom
+        meeting={meeting}
+        user={user}
+        people={data.people.filter((person) => person.id !== user.id)}
+        skipLobby={skipMeetingLobby}
+        onInvite={(attendeeIds) => addMeetingAttendees(meeting, attendeeIds)}
+        onLeave={leaveMeeting}
+        onEndMeeting={endMeetingForEveryone}
+        onToast={setToast}
+      />
       <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
       <InAppNotification notification={notification} onOpen={() => setNotification(null)} onClose={() => setNotification(null)} />
       <Toast message={toast} onClose={() => setToast("")} />
