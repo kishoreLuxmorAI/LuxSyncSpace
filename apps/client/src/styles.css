@@ -539,6 +539,12 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .directory-tools { min-height: 69px; padding: 14px 16px; display: flex; align-items: center; border-bottom: 1px solid var(--soft-line); gap: 8px; }
 .directory-tools .section-search { margin: 0; width: min(430px, 45%); }
 .directory-tools select { margin-left: auto; height: 36px; border: 1px solid #dfe4eb; border-radius: 7px; background: white; padding: 0 10px; color: #5c687c; font-size: 10px; }
+.people-filter { position: relative; }
+.people-filter > .icon-button.active { color: var(--blue); background: var(--blue-soft); }
+.people-filter-menu { position: absolute; z-index: 15; top: calc(100% + 8px); right: 0; width: 190px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: white; box-shadow: 0 12px 32px rgba(20,34,58,.18); }
+.people-filter-menu > b { display: block; padding: 5px 8px 8px; color: #8a95a5; font-size: 9px; text-transform: uppercase; letter-spacing: .07em; }
+.people-filter-menu button { width: 100%; min-height: 33px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: #526075; display: flex; align-items: center; justify-content: space-between; text-align: left; font-size: 10px; }
+.people-filter-menu button:hover, .people-filter-menu button.selected { color: var(--blue); background: #f2f6ff; }
 .view-toggle { display: flex; border: 1px solid #e0e4eb; border-radius: 7px; overflow: hidden; }
 .view-toggle button { width: 34px; height: 32px; border: 0; background: white; color: #929baa; display: grid; place-items: center; }
 .view-toggle button.active { background: #edf2ff; color: var(--blue); }
