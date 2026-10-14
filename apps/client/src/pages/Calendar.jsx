@@ -4,6 +4,58 @@ import { useEffect, useRef, useState } from "react";
 import { eventTime } from "../lib/format";
 import { Avatar } from "../components/Avatar";
 
+function layoutDayEvents(events, day, startHour, hoursCount) {
+  const rangeStart = startHour * 60;
+  const rangeEnd = (startHour + hoursCount) * 60;
+  const dayEvents = events
+    .filter((event) => isSameDay(new Date(event.starts_at), day))
+    .map((event) => {
+      const start = new Date(event.starts_at);
+      const end = new Date(event.ends_at);
+      const startMinute = start.getHours() * 60 + start.getMinutes();
+      const durationMinutes = Math.max(30, (end.getTime() - start.getTime()) / 60000);
+      return {
+        event,
+        startMinute: Math.max(rangeStart, startMinute),
+        endMinute: Math.min(rangeEnd, startMinute + durationMinutes)
+      };
+    })
+    .filter((item) => item.endMinute > item.startMinute)
+    .sort((first, second) => first.startMinute - second.startMinute || second.endMinute - first.endMinute);
+
+  const laidOutEvents = [];
+  let cluster = [];
+  let clusterEnd = -Infinity;
+
+  function placeCluster() {
+    const laneEnds = [];
+    for (const item of cluster) {
+      let lane = laneEnds.findIndex((end) => end <= item.startMinute);
+      if (lane === -1) {
+        lane = laneEnds.length;
+        laneEnds.push(item.endMinute);
+      } else {
+        laneEnds[lane] = item.endMinute;
+      }
+      item.lane = lane;
+    }
+    for (const item of cluster) {
+      laidOutEvents.push({ ...item, laneCount: laneEnds.length });
+    }
+    cluster = [];
+    clusterEnd = -Infinity;
+  }
+
+  for (const item of dayEvents) {
+    if (cluster.length && item.startMinute >= clusterEnd) placeCluster();
+    cluster.push(item);
+    clusterEnd = Math.max(clusterEnd, item.endMinute);
+  }
+  if (cluster.length) placeCluster();
+
+  return laidOutEvents;
+}
+
 export function Calendar({ events, onNewEvent, onJoinMeeting }) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [rangeMode, setRangeMode] = useState("all");
@@ -79,7 +131,7 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
               <div className="view-select">Week</div>
             </div>
           </header>
-          <div className="week-grid" ref={gridRef}>
+          <div className="week-grid" ref={gridRef} style={{ "--calendar-hours": hoursCount }}>
             <div className="time-head" />
             {days.map((day) => (
               <div className={`day-head ${isSameDay(day, new Date()) ? "today" : ""}`} key={day.toISOString()}>
@@ -119,23 +171,24 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
                     <span className="calendar-now-dot" />
                   </div>
                 )}
-                {events
-                  .filter((event) => isSameDay(new Date(event.starts_at), day))
-                  .map((event) => {
-                    const start = new Date(event.starts_at);
-                    const end = new Date(event.ends_at);
+                {layoutDayEvents(events, day, startHour, hoursCount)
+                  .map(({ event, startMinute, endMinute, lane, laneCount }) => {
                     const unavailable = Boolean(event.cancelled_at || event.ended_at);
-                    const startOffsetMinutes = (start.getHours() - startHour) * 60 + start.getMinutes();
-                    const top = Math.max(0, (startOffsetMinutes / 60) * 64);
-                    const durationHours = Math.max(0.5, (end.getTime() - start.getTime()) / 3600000);
-                    const height = Math.max(36, durationHours * 64);
+                    const top = ((startMinute - startHour * 60) / 60) * 64;
+                    const height = ((endMinute - startMinute) / 60) * 64;
                     return (
                       <button
                         className={`calendar-event ${event.cancelled_at ? "cancelled" : event.ended_at ? "ended" : ""}`}
                         disabled={unavailable}
                         onClick={() => onJoinMeeting(event)}
                         key={event.id}
-                        style={{ top, height, "--event": event.color }}
+                        style={{
+                          top,
+                          height,
+                          left: `calc(${(lane * 100) / laneCount}% + 4px)`,
+                          width: `calc(${100 / laneCount}% - 8px)`,
+                          "--event": event.color
+                        }}
                       >
                         <b>{event.cancelled_at ? `Cancelled: ${event.title}` : event.ended_at ? `Ended: ${event.title}` : event.title}</b>
                         <small>{event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.ended_at ? "Ended by organizer" : eventTime(event.starts_at)}</small>

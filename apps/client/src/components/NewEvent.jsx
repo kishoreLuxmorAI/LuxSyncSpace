@@ -180,8 +180,8 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
   }
 
   return (
-    <Modal title="Schedule an event" subtitle="Bring the right people together" onClose={onClose}>
-      <form className="event-form" onSubmit={submit}>
+    <Modal title="Schedule an event" subtitle="Bring the right people together" onClose={onClose} className="schedule-event-modal">
+      <form className="event-form schedule-event-form" onSubmit={submit}>
         <label>
           <span>Event title</span>
           <input
