@@ -740,22 +740,9 @@ function MessageBody({ body }) {
         <a
           className="message-link"
           href={part}
+          target="_blank"
+          rel="noopener noreferrer"
           key={`${part}-${index}`}
-          onClick={(event) => {
-            try {
-              const url = new URL(part, window.location.origin);
-              const mId = url.searchParams.get("meeting");
-              if (mId) {
-                event.preventDefault();
-                const nextUrl = new URL(window.location.href);
-                nextUrl.searchParams.delete("channel");
-                nextUrl.searchParams.delete("direct");
-                nextUrl.searchParams.set("meeting", mId);
-                window.history.pushState({ luxsyncspace: true, meetingId: mId }, "", nextUrl);
-                window.dispatchEvent(new PopStateEvent("popstate"));
-              }
-            } catch { }
-          }}
         >
           {part}
         </a>

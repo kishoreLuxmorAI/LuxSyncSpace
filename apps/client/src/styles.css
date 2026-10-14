@@ -997,6 +997,8 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .meeting-chat article.mine { align-self: flex-end; border-radius: 8px 8px 2px 8px; background: #2855bd; }
 .meeting-chat article header { display: flex; justify-content: space-between; gap: 12px; }.meeting-chat article b { font-size: 8.5px; }.meeting-chat article time { color: #aab7ca; font-size: 7.5px; }
 .meeting-chat article p { margin: 5px 0 0; font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.meeting-chat .message-link { color: #79a5ff; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; word-break: break-all; }
+.meeting-chat article.mine .message-link { color: #d6e4ff; }
 .meeting-chat-empty { margin: auto; color: #8290a5; text-align: center; }.meeting-chat-empty p { max-width: 190px; font-size: 9px; line-height: 1.5; }
 .meeting-chat-composer { margin: 10px; padding: 4px; border: 1px solid #39475c; border-radius: 8px; background: #1e2a3c; display: flex; flex-shrink: 0; }
 .meeting-chat-composer input { flex: 1; min-width: 0; border: 0; outline: 0; padding: 0 7px; color: white; background: transparent; font-size: 10px; }

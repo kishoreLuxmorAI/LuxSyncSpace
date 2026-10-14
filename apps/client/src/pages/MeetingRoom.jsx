@@ -678,7 +678,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
             </button>
             {allParticipants.map((participant) => <div key={participant.socketId}><span style={{ "--participant": participant.user?.avatar_color }}>{participant.user?.initials}</span><div><b>{participant.user?.full_name}{participant.local ? " (You)" : ""}</b><small>{participant.user?.title}</small></div>{participant.raised && <Hand size={17} />}</div>)}
           </div> : <><div className="meeting-chat">
-            {chat.map((item) => <article key={item.id} className={item.sender_id === user.id ? "mine" : ""}><header><b>{item.sender_name}</b><time>{new Date(item.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></header><p>{item.body}</p></article>)}
+            {chat.map((item) => <article key={item.id} className={item.sender_id === user.id ? "mine" : ""}><header><b>{item.sender_name}</b><time>{new Date(item.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></header><p><MeetingChatBody body={item.body} /></p></article>)}
             {!chat.length && <div className="meeting-chat-empty"><MessageSquareText size={25} /><p>Messages sent during this meeting appear here.</p></div>}
             <div ref={chatBottomRef} />
           </div><form className="meeting-chat-composer" onSubmit={sendChat}><input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} placeholder="Message everyone" /><button><Send size={17} /></button></form></>}
@@ -740,3 +740,24 @@ function VideoTile({ participant, localVideoRef, cameraOn, speakerOn }) {
     <footer><b>{participant.user?.full_name || "Joining…"}{participant.local ? " (You)" : ""}</b>{participant.local && !participant.stream && <small>No media access</small>}</footer>
   </article>;
 }
+
+function MeetingChatBody({ body }) {
+  const parts = String(body || "").split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((part, index) => {
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a
+          className="message-link"
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          key={`${part}-${index}`}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
