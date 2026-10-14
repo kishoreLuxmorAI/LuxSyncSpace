@@ -346,8 +346,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
         </section>
       </div>
       {selected && !editing && !pendingDelete && <Modal title="Employee profile" subtitle={selected.employee_id} onClose={() => setSelected(null)}><div className="profile-modal"><ProfileDetails person={selected} />{(canEditEmployee(selected) || canDeleteEmployee(selected)) && <div className="employee-profile-actions">{canDeleteEmployee(selected) && <button className="button button-danger" onClick={() => setPendingDelete(selected)}><UserX size={16} /> Delete employee</button>}{canEditEmployee(selected) && <button className="button button-primary" onClick={() => startEditing(selected)}><Pencil size={16} /> Edit details</button>}</div>}</div></Modal>}
-      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => setEditing(null)}>
-        <form className="event-form" onSubmit={updateEmployee}>
+      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => { setEditing(null); setSelected(null); }}>        <form className="event-form" onSubmit={updateEmployee}>
           <div className="form-grid"><label><span>Employee name</span><input value={editing.fullName} onChange={(e) => setEditing({ ...editing, fullName: e.target.value })} required /></label><label><span>Work email</span><input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} required /></label></div>
           <div className="form-grid"><label><span>Employee ID</span><input value={editing.employeeId} onChange={(e) => setEditing({ ...editing, employeeId: e.target.value.toUpperCase() })} pattern="[A-Za-z0-9-]{3,30}" required /></label><label><span>Designation</span><input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} required /></label></div>
           <div className="form-grid"><label><span>Department</span><input value={editing.department} onChange={(e) => setEditing({ ...editing, department: e.target.value })} required /></label><label><span>Access role</span><select value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr" disabled={user.role === "manager"}>HR</option>{user.role === "senior_leader" && <option value="senior_leader">Senior leader</option>}</select></label></div>
@@ -362,8 +361,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           <UserX size={30} />
           <h3>Deactivate and mark as deleted</h3>
           <p>The employee will be signed out and will no longer be able to access the workspace. Existing conversations and records will be preserved.</p>
-          <div className="modal-actions"><button className="button button-secondary" onClick={() => setPendingDelete(null)} disabled={busy}>Cancel</button><button className="button button-danger" onClick={deleteEmployee} disabled={busy}>{busy ? "Deleting…" : "Delete employee"}</button></div>
-        </div>
+          <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => { setEditing(null); setSelected(null); }} disabled={busy}>Cancel</button><button className="button button-primary" disabled={busy}><Save size={16} /> {busy ? "Saving…" : "Save changes"}</button></div>        </div>
       </Modal>}
       {pendingReset && <Modal title={`Reset ${pendingReset.full_name}'s password?`} subtitle="Administrator password reset" onClose={() => !busy && setPendingReset(null)}>
         <div className="employment-confirm password-reset-confirm">
