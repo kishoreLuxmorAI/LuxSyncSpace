@@ -336,7 +336,7 @@ export default function App() {
       <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onOpen={() => openNotification(notification)} onClose={() => setNotification(null)} />
       {!tutorialOpen && <NotificationSetupPrompt onToast={setToast} />}
-      {tutorialOpen && <OnboardingTutorial user={user} onComplete={completeTutorial} onNavigate={navigate} onToast={setToast} />}
+      {tutorialOpen && <OnboardingTutorial user={user} onComplete={completeTutorial} onClose={() => setTutorialOpen(false)} onNavigate={navigate} onToast={setToast} />}
       {newEvent && <NewEvent people={data.people.filter((p) => p.id !== user.id)} onSave={saveEvent} onClose={() => setNewEvent(false)} initialData={typeof newEvent === "object" ? newEvent : null} />}
       <Toast message={toast} onClose={() => setToast("")} />
     </>
