@@ -37,7 +37,6 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
   const statusBtnRef = useRef();
   const profileMenuRef = useRef();
   const profileBtnRef = useRef();
-  const sidebarProfileBtnRef = useRef();
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -64,9 +63,7 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
         profileMenuRef.current &&
         !profileMenuRef.current.contains(event.target) &&
         profileBtnRef.current &&
-        !profileBtnRef.current.contains(event.target) &&
-        sidebarProfileBtnRef.current &&
-        !sidebarProfileBtnRef.current.contains(event.target)
+        !profileBtnRef.current.contains(event.target)
       ) {
         setProfileOpen(false);
       }
@@ -127,11 +124,10 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
           <button className={active === "settings" ? "active" : ""} onClick={() => navigate("settings")}><Settings size={19} /><span>Settings</span></button>
           <button className={active === "help" ? "active" : ""} onClick={() => navigate("help")}><CircleHelp size={19} /><span>Help & support</span></button>
         </nav>
-        <button ref={sidebarProfileBtnRef} className="sidebar-user" onClick={() => { setStatusOpen(false); setNotificationsOpen(false); setProfileOpen(!profileOpen); }}>
+        <div className="sidebar-user">
           <Avatar person={user} showPresence />
           <span><b>{user.full_name}</b><small>{user.title}</small></span>
-          <ChevronDown size={16} />
-        </button>
+        </div>
       </aside>
       <div className="shell-main">
         <header className="topbar">

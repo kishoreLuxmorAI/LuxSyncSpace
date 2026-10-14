@@ -34,12 +34,19 @@ export function notificationsEnabled() {
 
 export async function enableNotifications() {
   if (!notificationsSupported()) throw new Error("Notifications are not supported in this browser");
+  if (!("PushManager" in window)) throw new Error("Push notifications are not supported in this browser");
   const permission = await Notification.requestPermission();
-  const enabled = permission === "granted";
-  if (!enabled) throw new Error("Notification permission was not granted");
+  if (permission !== "granted") {
+    throw new Error(permission === "denied"
+      ? "Notifications are blocked for this site. Allow them in your browser's site settings, then try again."
+      : "Allow notifications in the browser prompt to enable alerts.");
+  }
+  const { publicKey } = await api("/push/config");
+  if (!publicKey) throw new Error("Push notifications are not configured on the server");
+
   localStorage.setItem(ENABLED_KEY, "true");
   try {
-    await refreshNotificationSubscription();
+    await refreshNotificationSubscription(publicKey);
   } catch (error) {
     localStorage.setItem(ENABLED_KEY, "false");
     throw error;
@@ -56,13 +63,15 @@ async function getNotificationRegistration() {
   return navigator.serviceWorker.ready;
 }
 
-export async function refreshNotificationSubscription() {
+export async function refreshNotificationSubscription(configuredPublicKey) {
   if (!notificationsEnabled()) return false;
   if (subscriptionRefresh) return subscriptionRefresh;
   subscriptionRefresh = (async () => {
     const registration = await getNotificationRegistration();
     await navigator.serviceWorker.ready;
-    const { publicKey } = await api("/push/config");
+    const { publicKey } = configuredPublicKey
+      ? { publicKey: configuredPublicKey }
+      : await api("/push/config");
     if (!publicKey) throw new Error("Push notifications are not configured");
     const existing = await registration.pushManager.getSubscription();
     const subscription = existing || await registration.pushManager.subscribe({
