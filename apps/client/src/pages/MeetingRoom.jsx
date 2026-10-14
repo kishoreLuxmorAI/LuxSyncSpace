@@ -24,10 +24,10 @@ const VIDEO_CONSTRAINTS = {
   frameRate: { ideal: 15, max: 20 }
 };
 
-export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onEndMeeting, onToast }) {
+export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onEndMeeting, onToast, skipLobby = false }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
   const isOrganizer = meeting.organizer_id === user.id;
-  const [inLobby, setInLobby] = useState(true);
+  const [inLobby, setInLobby] = useState(!skipLobby);
   const [cameraBlocked, setCameraBlocked] = useState(false);
   const [micDevice, setMicDevice] = useState("Microphone (Realtek(R) Audio)");
   const [speakerDevice, setSpeakerDevice] = useState("Speakers (Realtek(R) Audio)");
@@ -47,6 +47,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const [elapsed, setElapsed] = useState("00:00");
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [invitingUserId, setInvitingUserId] = useState(null);
   const [invitedUsers, setInvitedUsers] = useState(new Set());
   const localVideoRef = useRef();
   const lobbyVideoRef = useRef();
@@ -58,8 +59,15 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const pendingCandidatesRef = useRef(new Map());
   const reconnectTimersRef = useRef(new Map());
   const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
+  const chatBottomRef = useRef(null);
 
   useEffect(() => { panelRef.current = panel; }, [panel]);
+
+  useEffect(() => {
+    if (panel === "chat") {
+      chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chat, panel]);
 
   useEffect(() => {
     if (!meetingChatPopup) return;
@@ -80,6 +88,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
 
   // Initialize preview media and detect devices for the Lobby
   useEffect(() => {
+    if (skipLobby) return;
     let disposed = false;
     async function initPreview() {
       try {
@@ -134,7 +143,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     return () => {
       disposed = true;
     };
-  }, [meeting.id]);
+  }, [meeting.id, skipLobby]);
 
   // Keep lobby video attached to local stream
   useEffect(() => {
@@ -484,6 +493,18 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     }
   }
 
+  async function invitePerson(person) {
+    setInvitingUserId(person.id);
+    try {
+      await onInvite?.([person.id]);
+      setInvitedUsers((current) => new Set(current).add(person.id));
+    } catch (error) {
+      onToast(error.message || "Could not invite this person.");
+    } finally {
+      setInvitingUserId(null);
+    }
+  }
+
   const allParticipants = [{ socketId: "local", user, stream: localStream, raised, local: true }, ...participants];
 
   if (inLobby) {
@@ -638,17 +659,14 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
                   {invitedUsers.has(person.id) ? (
                     <span style={{ fontSize: "0.8rem", opacity: 0.7, padding: "0.25rem 0.5rem" }}>Invite sent</span>
                   ) : (
-                    <button className="button button-primary" style={{ padding: "0.25rem 0.75rem", fontSize: "0.8rem", height: "auto" }} onClick={() => { 
-                      onInvite([person.id]); 
-                      setInvitedUsers((prev) => new Set([...prev, person.id]));
-                      setTimeout(() => {
-                        setInvitedUsers((prev) => {
-                          const next = new Set(prev);
-                          next.delete(person.id);
-                          return next;
-                        });
-                      }, 10000);
-                    }}>Invite</button>
+                    <button
+                      className="button button-primary"
+                      style={{ padding: "0.25rem 0.75rem", fontSize: "0.8rem", height: "auto" }}
+                      onClick={() => invitePerson(person)}
+                      disabled={invitingUserId === person.id}
+                    >
+                      {invitingUserId === person.id ? "Inviting…" : "Invite"}
+                    </button>
                   )}
                 </div>
               ))}
@@ -660,8 +678,9 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
             </button>
             {allParticipants.map((participant) => <div key={participant.socketId}><span style={{ "--participant": participant.user?.avatar_color }}>{participant.user?.initials}</span><div><b>{participant.user?.full_name}{participant.local ? " (You)" : ""}</b><small>{participant.user?.title}</small></div>{participant.raised && <Hand size={17} />}</div>)}
           </div> : <><div className="meeting-chat">
-            {chat.map((item) => <article key={item.id} className={item.sender_id === user.id ? "mine" : ""}><header><b>{item.sender_name}</b><time>{new Date(item.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></header><p>{item.body}</p></article>)}
+            {chat.map((item) => <article key={item.id} className={item.sender_id === user.id ? "mine" : ""}><header><b>{item.sender_name}</b><time>{new Date(item.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></header><p><MeetingChatBody body={item.body} /></p></article>)}
             {!chat.length && <div className="meeting-chat-empty"><MessageSquareText size={25} /><p>Messages sent during this meeting appear here.</p></div>}
+            <div ref={chatBottomRef} />
           </div><form className="meeting-chat-composer" onSubmit={sendChat}><input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} placeholder="Message everyone" /><button><Send size={17} /></button></form></>}
         </aside>}
       </main>
@@ -721,3 +740,24 @@ function VideoTile({ participant, localVideoRef, cameraOn, speakerOn }) {
     <footer><b>{participant.user?.full_name || "Joining…"}{participant.local ? " (You)" : ""}</b>{participant.local && !participant.stream && <small>No media access</small>}</footer>
   </article>;
 }
+
+function MeetingChatBody({ body }) {
+  const parts = String(body || "").split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((part, index) => {
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a
+          className="message-link"
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          key={`${part}-${index}`}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
