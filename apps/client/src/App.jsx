@@ -36,16 +36,52 @@ export default function App() {
   const [notification, setNotification] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [chatParams, setChatParams] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      channel: params.get("channel"),
+      direct: params.get("direct")
+    };
+  });
 
-  const navigate = useCallback((view, { replace = false } = {}) => {
+  const navigate = useCallback((view, { replace = false, channel, direct } = {}) => {
     const next = view || "home";
     const url = new URL(window.location.href);
-    url.searchParams.delete("channel");
-    url.searchParams.delete("direct");
+
+    if (channel) {
+      url.searchParams.set("channel", channel);
+      url.searchParams.delete("direct");
+    } else if (channel === null || (next !== "chat" && !direct)) {
+      url.searchParams.delete("channel");
+    }
+
+    if (direct) {
+      url.searchParams.set("direct", direct);
+      url.searchParams.delete("channel");
+    } else if (direct === null || (next !== "chat" && !channel)) {
+      url.searchParams.delete("direct");
+    }
+
     url.searchParams.delete("meeting");
-    if (next === "home") url.searchParams.delete("view");
-    else url.searchParams.set("view", next);
-    window.history[replace ? "replaceState" : "pushState"]({ luxsyncspace: true, view: next }, "", url);
+    if (next === "home" && !url.searchParams.get("channel") && !url.searchParams.get("direct")) {
+      url.searchParams.delete("view");
+    } else {
+      url.searchParams.set("view", next);
+    }
+
+    const currentChannel = url.searchParams.get("channel");
+    const currentDirect = url.searchParams.get("direct");
+
+    window.history[replace ? "replaceState" : "pushState"](
+      { luxsyncspace: true, view: next, channel: currentChannel, direct: currentDirect },
+      "",
+      url
+    );
+
+    setChatParams({
+      channel: currentChannel,
+      direct: currentDirect
+    });
     setActive(next);
   }, []);
 
@@ -58,6 +94,10 @@ export default function App() {
       if (!nextMeeting) {
         setActiveMeeting(null);
         setActive(params.get("channel") || params.get("direct") ? "chat" : params.get("view") || "home");
+        setChatParams({
+          channel: params.get("channel"),
+          direct: params.get("direct")
+        });
       }
     };
     window.addEventListener("popstate", syncFromHistory);
@@ -218,7 +258,7 @@ export default function App() {
     setActive("meetings");
     setMeetingId(null);
     setActiveMeeting(null);
-    refreshWorkspace().catch(() => {});
+    refreshWorkspace().catch(() => { });
   }
 
   async function endMeetingForEveryone(meeting) {
@@ -255,14 +295,14 @@ export default function App() {
   function declineIncomingCall() {
     const meetingId = incomingCall?.meeting?.id;
     setIncomingCall(null);
-    dismissIncomingCallNotification(meetingId).catch(() => {});
+    dismissIncomingCallNotification(meetingId).catch(() => { });
   }
 
   function acceptIncomingCall() {
     const call = incomingCall;
     if (!call) return;
     setIncomingCall(null);
-    dismissIncomingCallNotification(call.meeting?.id).catch(() => {});
+    dismissIncomingCallNotification(call.meeting?.id).catch(() => { });
     joinMeeting(call.meeting);
   }
 
@@ -284,10 +324,10 @@ export default function App() {
     <>
       <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={() => setNotifications((current) => current.map((item) => ({ ...item, unread: false })))} onNotificationOpen={openNotification}>
         {active === "home" && <Home {...pageProps} />}
-        {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={new URLSearchParams(window.location.search).get("channel")} onStartCall={startCall} />}
+        {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={chatParams.channel} initialPersonId={chatParams.direct} onStartCall={startCall} />}
         {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={(initial) => setNewEvent(initial || true)} onCancelEvent={cancelEvent} onAddAttendees={addMeetingAttendees} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={(initial) => setNewEvent(initial || true)} onJoinMeeting={joinMeeting} />}
-        {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={() => navigate("chat")} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
+        {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={(person) => navigate("chat", person ? { direct: person.id } : {})} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
         {active === "settings" && <Settings user={user} people={data.workforce || data.people} onToast={setToast} onRefresh={refreshWorkspace} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} />}
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "help"].includes(active) && <Home {...pageProps} />}
@@ -296,7 +336,7 @@ export default function App() {
       <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onOpen={() => openNotification(notification)} onClose={() => setNotification(null)} />
       {!tutorialOpen && <NotificationSetupPrompt onToast={setToast} />}
-      {tutorialOpen && <OnboardingTutorial user={user} onComplete={completeTutorial} onNavigate={navigate} onToast={setToast} />}
+      {tutorialOpen && <OnboardingTutorial user={user} onComplete={completeTutorial} onClose={() => setTutorialOpen(false)} onNavigate={navigate} onToast={setToast} />}
       {newEvent && <NewEvent people={data.people.filter((p) => p.id !== user.id)} onSave={saveEvent} onClose={() => setNewEvent(false)} initialData={typeof newEvent === "object" ? newEvent : null} />}
       <Toast message={toast} onClose={() => setToast("")} />
     </>
