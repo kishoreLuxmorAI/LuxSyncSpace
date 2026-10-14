@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell, CalendarDays, Check, CheckCheck, ChevronDown, CircleHelp, LayoutDashboard,
   Menu, MessageSquareText, Search, Settings, Users, Video, X
@@ -31,16 +31,23 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(null);
   const searchRef = useRef();
+  const searchContainerRef = useRef();
   const notificationsMenuRef = useRef();
   const notificationsBtnRef = useRef();
   const statusMenuRef = useRef();
   const statusBtnRef = useRef();
   const profileMenuRef = useRef();
   const profileBtnRef = useRef();
-  const sidebarProfileBtnRef = useRef();
 
   useEffect(() => {
     function handleClickOutside(event) {
+      if (
+        results &&
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(event.target)
+      ) {
+        setResults(null);
+      }
       if (
         notificationsOpen &&
         notificationsMenuRef.current &&
@@ -64,22 +71,31 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
         profileMenuRef.current &&
         !profileMenuRef.current.contains(event.target) &&
         profileBtnRef.current &&
-        !profileBtnRef.current.contains(event.target) &&
-        sidebarProfileBtnRef.current &&
-        !sidebarProfileBtnRef.current.contains(event.target)
+        !profileBtnRef.current.contains(event.target)
       ) {
         setProfileOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [notificationsOpen, statusOpen, profileOpen]);
+  }, [notificationsOpen, statusOpen, profileOpen, results]);
+
+  const executeSearch = useCallback((searchTerm) => {
+    const q = (searchTerm !== undefined ? searchTerm : query).trim();
+    if (!q) {
+      setResults(null);
+      return;
+    }
+    api(`/search?q=${encodeURIComponent(q)}`)
+      .then((data) => setResults(data || { people: [], channels: [] }))
+      .catch(() => setResults({ people: [], channels: [] }));
+  }, [query]);
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults(null); return; }
-    const timer = setTimeout(() => api(`/search?q=${encodeURIComponent(query)}`).then(setResults).catch(() => {}), 250);
+    const timer = setTimeout(() => executeSearch(query), 250);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, executeSearch]);
 
   useEffect(() => {
     const handle = (event) => {
@@ -91,9 +107,8 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
     return () => window.removeEventListener("keydown", handle);
   }, []);
 
-
-  function navigate(view) {
-    setActive(view);
+  function navigate(view, options) {
+    setActive(view, options);
     setMobileOpen(false);
     setQuery("");
     setResults(null);
@@ -127,20 +142,52 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
           <button className={active === "settings" ? "active" : ""} onClick={() => navigate("settings")}><Settings size={19} /><span>Settings</span></button>
           <button className={active === "help" ? "active" : ""} onClick={() => navigate("help")}><CircleHelp size={19} /><span>Help & support</span></button>
         </nav>
-        <button ref={sidebarProfileBtnRef} className="sidebar-user" onClick={() => { setStatusOpen(false); setNotificationsOpen(false); setProfileOpen(!profileOpen); }}>
+        <div className="sidebar-user">
           <Avatar person={user} showPresence />
           <span><b>{user.full_name}</b><small>{user.title}</small></span>
-          <ChevronDown size={16} />
-        </button>
+        </div>
       </aside>
       <div className="shell-main">
         <header className="topbar">
           <button className="menu-button" onClick={() => setMobileOpen(true)}><Menu size={22} /></button>
-          <div className="global-search">
+          <form
+            ref={searchContainerRef}
+            className="global-search"
+            role="search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              executeSearch();
+            }}
+          >
             <Search size={18} />
-            <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people, messages, and channels" />
-            {results && <SearchResults results={results} onNavigate={navigate} onClose={() => { setQuery(""); setResults(null); }} />}
-          </div>
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  executeSearch();
+                } else if (e.key === "Escape") {
+                  setResults(null);
+                }
+              }}
+              placeholder="Search people, messages, and channels"
+            />
+            {results && (
+              <SearchResults
+                results={results}
+                onNavigate={(view, opts) => {
+                  navigate(view, opts);
+                  setResults(null);
+                }}
+                onClose={() => {
+                  setQuery("");
+                  setResults(null);
+                }}
+              />
+            )}
+          </form>
           <div className="top-actions">
             <button ref={statusBtnRef} className="availability-button" onClick={() => { setNotificationsOpen(false); setProfileOpen(false); setStatusOpen((open) => !open); }} title="Change your status" aria-label="Change your status" aria-expanded={statusOpen}>
               <i className={`availability-dot status-${user.availability_status || user.presence || "offline"}`} /><span>{availabilityOptions.find(([value]) => value === (user.availability_status || user.presence))?.[1] || "Offline"}</span><ChevronDown size={14} />
@@ -190,10 +237,10 @@ function SearchResults({ results, onNavigate, onClose }) {
   const empty = !people.length && !channels.length;
   return (
     <div className="search-results">
-      <div className="search-results-head"><span>Search results</span><button onClick={onClose}><X size={15} /></button></div>
+      <div className="search-results-head"><span>Search results</span><button type="button" onClick={onClose}><X size={15} /></button></div>
       {empty && <p className="search-empty">No results found. Try another phrase.</p>}
-      {!!people.length && <section><small>PEOPLE</small>{people.map((p) => <button onClick={() => onNavigate("chat")} key={p.id}><Avatar person={p} size="xs" /><span><b>{p.full_name}</b><em>{p.title}</em></span></button>)}</section>}
-      {!!channels.length && <section><small>CHANNELS</small>{channels.map((c) => <button onClick={() => onNavigate("chat")} key={c.id}><MessageSquareText size={17} /><span><b># {c.name}</b><em>{c.description}</em></span></button>)}</section>}
+      {!!people.length && <section><small>PEOPLE</small>{people.map((p) => <button type="button" onClick={() => onNavigate("chat", { direct: p.id })} key={p.id}><Avatar person={p} size="xs" /><span><b>{p.full_name}</b><em>{p.title}</em></span></button>)}</section>}
+      {!!channels.length && <section><small>CHANNELS</small>{channels.map((c) => <button type="button" onClick={() => onNavigate("chat", { channel: c.id })} key={c.id}><MessageSquareText size={17} /><span><b># {c.name}</b><em>{c.description}</em></span></button>)}</section>}
     </div>
   );
 }

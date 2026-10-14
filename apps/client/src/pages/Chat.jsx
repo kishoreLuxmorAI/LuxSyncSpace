@@ -14,9 +14,9 @@ const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
 
-export function Chat({ user, channels, people, directUnreadCounts = {}, onConversationRead, onRefresh, onToast, initialChannelId, onStartCall }) {
+export function Chat({ user, channels, people, directUnreadCounts = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
-  const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === new URLSearchParams(window.location.search).get("direct")) || null);
+  const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
@@ -236,6 +236,19 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     window.addEventListener("popstate", syncConversation);
     return () => window.removeEventListener("popstate", syncConversation);
   }, [channels, people]);
+
+  useEffect(() => {
+    if (initialChannelId && channels.some((channel) => channel.id === initialChannelId)) {
+      setSelected(initialChannelId);
+      setSelectedPerson(null);
+    } else if (initialPersonId) {
+      const targetPerson = people.find((person) => person.id === initialPersonId);
+      if (targetPerson) {
+        setSelected(null);
+        setSelectedPerson(targetPerson);
+      }
+    }
+  }, [initialChannelId, initialPersonId, channels, people]);
 
   useEffect(() => {
     const markReadWhenVisible = () => {
@@ -740,22 +753,9 @@ function MessageBody({ body }) {
         <a
           className="message-link"
           href={part}
+          target="_blank"
+          rel="noopener noreferrer"
           key={`${part}-${index}`}
-          onClick={(event) => {
-            try {
-              const url = new URL(part, window.location.origin);
-              const mId = url.searchParams.get("meeting");
-              if (mId) {
-                event.preventDefault();
-                const nextUrl = new URL(window.location.href);
-                nextUrl.searchParams.delete("channel");
-                nextUrl.searchParams.delete("direct");
-                nextUrl.searchParams.set("meeting", mId);
-                window.history.pushState({ luxsyncspace: true, meetingId: mId }, "", nextUrl);
-                window.dispatchEvent(new PopStateEvent("popstate"));
-              }
-            } catch { }
-          }}
         >
           {part}
         </a>
