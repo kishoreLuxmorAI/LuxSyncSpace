@@ -29,7 +29,6 @@ export default function App() {
   });
   const [meetingId, setMeetingId] = useState(() => new URLSearchParams(window.location.search).get("meeting"));
   const [activeMeeting, setActiveMeeting] = useState(null);
-  const [skipMeetingLobby, setSkipMeetingLobby] = useState(false);
   const [loading, setLoading] = useState(Boolean(authStore.get()));
   const [newEvent, setNewEvent] = useState(false);
   const [toast, setToast] = useState("");
@@ -37,16 +36,52 @@ export default function App() {
   const [notification, setNotification] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [chatParams, setChatParams] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      channel: params.get("channel"),
+      direct: params.get("direct")
+    };
+  });
 
-  const navigate = useCallback((view, { replace = false } = {}) => {
+  const navigate = useCallback((view, { replace = false, channel, direct } = {}) => {
     const next = view || "home";
     const url = new URL(window.location.href);
-    url.searchParams.delete("channel");
-    url.searchParams.delete("direct");
+
+    if (channel) {
+      url.searchParams.set("channel", channel);
+      url.searchParams.delete("direct");
+    } else if (channel === null || (next !== "chat" && !direct)) {
+      url.searchParams.delete("channel");
+    }
+
+    if (direct) {
+      url.searchParams.set("direct", direct);
+      url.searchParams.delete("channel");
+    } else if (direct === null || (next !== "chat" && !channel)) {
+      url.searchParams.delete("direct");
+    }
+
     url.searchParams.delete("meeting");
-    if (next === "home") url.searchParams.delete("view");
-    else url.searchParams.set("view", next);
-    window.history[replace ? "replaceState" : "pushState"]({ luxsyncspace: true, view: next }, "", url);
+    if (next === "home" && !url.searchParams.get("channel") && !url.searchParams.get("direct")) {
+      url.searchParams.delete("view");
+    } else {
+      url.searchParams.set("view", next);
+    }
+
+    const currentChannel = url.searchParams.get("channel");
+    const currentDirect = url.searchParams.get("direct");
+
+    window.history[replace ? "replaceState" : "pushState"](
+      { luxsyncspace: true, view: next, channel: currentChannel, direct: currentDirect },
+      "",
+      url
+    );
+
+    setChatParams({
+      channel: currentChannel,
+      direct: currentDirect
+    });
     setActive(next);
   }, []);
 
@@ -59,6 +94,10 @@ export default function App() {
       if (!nextMeeting) {
         setActiveMeeting(null);
         setActive(params.get("channel") || params.get("direct") ? "chat" : params.get("view") || "home");
+        setChatParams({
+          channel: params.get("channel"),
+          direct: params.get("direct")
+        });
       }
     };
     window.addEventListener("popstate", syncFromHistory);
@@ -202,30 +241,24 @@ export default function App() {
     setTutorialOpen(false);
   }
 
-  function joinMeeting(event, { skipLobby = false } = {}) {
+  function joinMeeting(event) {
     const url = new URL(window.location.href);
     url.searchParams.delete("channel");
-    url.searchParams.delete("direct");
-    url.searchParams.delete("view");
     url.searchParams.set("meeting", event.id);
-    window.history.pushState({ luxsyncspace: true, meetingId: event.id }, "", url);
+    window.history.pushState({ luxsyncspace: true, view: active, meetingId: event.id }, "", url);
     setActiveMeeting(event);
     setMeetingId(event.id);
-    setSkipMeetingLobby(skipLobby);
   }
 
   function leaveMeeting() {
     const url = new URL(window.location.href);
     url.searchParams.delete("meeting");
-    url.searchParams.delete("channel");
-    url.searchParams.delete("direct");
     url.searchParams.set("view", "meetings");
     window.history.replaceState({ luxsyncspace: true, view: "meetings" }, "", url);
     setActive("meetings");
     setMeetingId(null);
     setActiveMeeting(null);
-    setSkipMeetingLobby(false);
-    refreshWorkspace().catch(() => {});
+    refreshWorkspace().catch(() => { });
   }
 
   async function endMeetingForEveryone(meeting) {
@@ -235,9 +268,8 @@ export default function App() {
   }
 
   async function startInstantMeeting(options = {}) {
-    let meeting;
     try {
-      meeting = await api("/meetings/instant", {
+      const meeting = await api("/meetings/instant", {
         method: "POST",
         body: JSON.stringify({
           title: options.title || `${user.full_name}'s meeting`,
@@ -246,10 +278,9 @@ export default function App() {
           isCall: Boolean(options.isCall)
         })
       });
+      await refreshWorkspace();
+      joinMeeting(meeting);
     } catch (error) { setToast(error.message); }
-    if (!meeting) return;
-    joinMeeting(meeting, { skipLobby: Boolean(options.isCall) });
-    refreshWorkspace().catch((error) => setToast(error.message));
   }
 
   async function startCall(person, mode) {
@@ -264,14 +295,14 @@ export default function App() {
   function declineIncomingCall() {
     const meetingId = incomingCall?.meeting?.id;
     setIncomingCall(null);
-    dismissIncomingCallNotification(meetingId).catch(() => {});
+    dismissIncomingCallNotification(meetingId).catch(() => { });
   }
 
   function acceptIncomingCall() {
     const call = incomingCall;
     if (!call) return;
     setIncomingCall(null);
-    dismissIncomingCallNotification(call.meeting?.id).catch(() => {});
+    dismissIncomingCallNotification(call.meeting?.id).catch(() => { });
     joinMeeting(call.meeting);
   }
 
@@ -281,16 +312,7 @@ export default function App() {
   if (meetingId) {
     const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
     return <>
-      <MeetingRoom
-        meeting={meeting}
-        user={user}
-        people={data.people.filter((person) => person.id !== user.id)}
-        skipLobby={skipMeetingLobby}
-        onInvite={(attendeeIds) => addMeetingAttendees(meeting, attendeeIds)}
-        onLeave={leaveMeeting}
-        onEndMeeting={endMeetingForEveryone}
-        onToast={setToast}
-      />
+      <MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onEndMeeting={endMeetingForEveryone} onToast={setToast} />
       <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
       <InAppNotification notification={notification} onOpen={() => setNotification(null)} onClose={() => setNotification(null)} />
       <Toast message={toast} onClose={() => setToast("")} />
@@ -302,10 +324,10 @@ export default function App() {
     <>
       <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={() => setNotifications((current) => current.map((item) => ({ ...item, unread: false })))} onNotificationOpen={openNotification}>
         {active === "home" && <Home {...pageProps} />}
-        {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={new URLSearchParams(window.location.search).get("channel")} onStartCall={startCall} />}
+        {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={chatParams.channel} initialPersonId={chatParams.direct} onStartCall={startCall} />}
         {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={(initial) => setNewEvent(initial || true)} onCancelEvent={cancelEvent} onAddAttendees={addMeetingAttendees} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={(initial) => setNewEvent(initial || true)} onJoinMeeting={joinMeeting} />}
-        {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={() => navigate("chat")} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
+        {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={(person) => navigate("chat", person ? { direct: person.id } : {})} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
         {active === "settings" && <Settings user={user} people={data.workforce || data.people} onToast={setToast} onRefresh={refreshWorkspace} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} />}
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "help"].includes(active) && <Home {...pageProps} />}
