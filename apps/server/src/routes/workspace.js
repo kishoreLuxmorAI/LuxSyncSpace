@@ -148,7 +148,9 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
       });
     res.json({
       people: directoryPeople,
-      workforce: workforceRoles.has(viewerRole) ? people : undefined,
+      workforce: workforceRoles.has(viewerRole)
+        ? people.filter((person) => person.employment_status !== "deleted")
+        : undefined,
       channels: channels.map((channel) => ({ ...channel, unread_count: channelUnread.get(channel.id) || 0 })),
       events,
       announcements,
