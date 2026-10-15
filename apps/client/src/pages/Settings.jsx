@@ -361,7 +361,8 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           <UserX size={30} />
           <h3>Deactivate and mark as deleted</h3>
           <p>The employee will be signed out and will no longer be able to access the workspace. Existing conversations and records will be preserved.</p>
-          <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => { setEditing(null); setSelected(null); }} disabled={busy}>Cancel</button><button className="button button-primary" disabled={busy}><Save size={16} /> {busy ? "Saving…" : "Save changes"}</button></div>        </div>
+          <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => { setPendingDelete(null); setSelected(null); }} disabled={busy}>Cancel</button><button type="button" className="button button-primary" onClick={deleteEmployee} disabled={busy}><UserX size={16} /> {busy ? "Deleting…" : "Delete employee"}</button></div>
+        </div>
       </Modal>}
       {pendingReset && <Modal title={`Reset ${pendingReset.full_name}'s password?`} subtitle="Administrator password reset" onClose={() => !busy && setPendingReset(null)}>
         <div className="employment-confirm password-reset-confirm">
