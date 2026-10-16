@@ -9,6 +9,7 @@ import { sendEmployeeInvitation, sendPasswordResetCompleted, sendSupportRequest 
 import { config } from "../config.js";
 import { sendPushToChannel, sendPushToOrganization, sendPushToUser } from "../services/push.js";
 import { cached, invalidateCache } from "../services/cache.js";
+import { gmailEmailSchema } from "../validation.js";
 
 export const workspaceRouter = Router();
 workspaceRouter.use(requireAuth);
@@ -509,7 +510,7 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
     const input = z.object({
       fullName: z.string().trim().min(2).max(120),
       employeeId: z.string().trim().toUpperCase().regex(/^[A-Z0-9-]{3,30}$/, "Employee ID must use letters, numbers, or hyphens").or(z.literal("")).default(""),
-      email: z.string().email(),
+      email: gmailEmailSchema,
       title: z.string().trim().min(2).max(120),
       role: z.enum(["employee", "team_lead", "manager", "hr"]).default("employee"),
       department: z.string().trim().min(2).max(100),
@@ -599,7 +600,7 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
     const input = z.object({
       fullName: z.string().trim().min(2).max(120),
       employeeId: z.string().trim().toUpperCase().regex(/^[A-Z0-9-]{3,30}$/, "Employee ID must use letters, numbers, or hyphens"),
-      email: z.string().trim().email(),
+      email: gmailEmailSchema,
       title: z.string().trim().min(2).max(120),
       role: z.enum(["employee", "team_lead", "manager", "hr", "senior_leader"]),
       department: z.string().trim().min(2).max(100),

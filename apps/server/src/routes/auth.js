@@ -8,9 +8,14 @@ import { requireAuth } from "../middleware/auth.js";
 
 export const authRouter = Router();
 
+const authEmailSchema = z.string().trim().email().refine(
+  (email) => email.split("@").at(-1)?.toLowerCase() !== "gmai.com",
+  "Please enter a valid email address."
+);
+
 authRouter.post("/login", async (req, res, next) => {
   try {
-    const input = z.object({ email: z.string().email(), password: z.string().min(8) }).parse(req.body);
+    const input = z.object({ email: authEmailSchema, password: z.string().min(8) }).parse(req.body);
     const [user] = await sql`
       SELECT u.*, o.name AS organization_name, m.full_name AS manager_name
       FROM users u JOIN organizations o ON o.id = u.organization_id
@@ -40,7 +45,7 @@ authRouter.post("/login", async (req, res, next) => {
 
 authRouter.post("/forgot-password", async (req, res, next) => {
   try {
-    const { email } = z.object({ email: z.string().email() }).parse(req.body);
+    const { email } = z.object({ email: authEmailSchema }).parse(req.body);
     const [user] = await sql`
       SELECT id, organization_id FROM users
       WHERE lower(email) = lower(${email}) AND employment_status = 'active'

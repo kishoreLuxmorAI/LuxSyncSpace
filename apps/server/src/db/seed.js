@@ -1,10 +1,12 @@
 import bcrypt from "bcryptjs";
 import { sql } from "./client.js";
 import { config } from "../config.js";
+import { gmailEmailSchema } from "../validation.js";
 
 if (!config.adminEmail || !config.adminPassword) {
   throw new Error("ADMIN_EMAIL and ADMIN_PASSWORD are required");
 }
+const adminEmail = gmailEmailSchema.parse(config.adminEmail);
 
 console.log("Initializing LuxSyncspace organization...");
 
@@ -38,7 +40,7 @@ const [admin] = await sql`
     initials, avatar_color, presence, phone, location, bio, joined_at, must_change_password
   )
   VALUES (
-    ${org.id}, 'LUX-0001', ${config.adminEmail}, ${passwordHash}, 'Luxmor Administrator',
+    ${org.id}, 'LUX-0001', ${adminEmail}, ${passwordHash}, 'Luxmor Administrator',
     'Workspace Administrator', 'Administration', 'senior_leader', 'LA', '#2557D6', 'online',
     '', 'India', 'LuxSyncspace organization administrator.', CURRENT_DATE, FALSE
   )
