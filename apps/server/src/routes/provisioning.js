@@ -6,6 +6,7 @@ import { sql } from "../db/client.js";
 import { config } from "../config.js";
 import { sendEmployeeInvitation } from "../services/email.js";
 import { invalidateCache } from "../services/cache.js";
+import { gmailEmailSchema } from "../validation.js";
 
 export const provisioningRouter = Router();
 
@@ -24,7 +25,7 @@ provisioningRouter.post("/employees", async (req, res, next) => {
     if (!hasValidToken(req)) return res.status(401).json({ error: "Unauthorized" });
 
     const input = z.object({
-      email: z.string().email(),
+      email: gmailEmailSchema,
       employeeId: z.string().trim().toUpperCase().min(3).max(30),
       fullName: z.string().trim().min(2).max(120),
       title: z.string().trim().min(2).max(120),
