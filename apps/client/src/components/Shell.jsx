@@ -23,8 +23,7 @@ const availabilityOptions = [
   ["offline", "Appear offline"]
 ];
 
-export function Shell({ user, active, setActive, children, onLogout, onStatusChange, notifications = [], unreadChatCount = 0, onNotificationsRead, onNotificationRead, onNotificationOpen }) {
-  const unreadNotificationCount = notifications.filter((item) => item.unread).length;
+export function Shell({ user, active, setActive, children, onLogout, onStatusChange, notifications = [], unreadChatCount = 0, onNotificationsRead, onNotificationOpen }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -120,7 +119,10 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
   function toggleNotifications() {
     setProfileOpen(false);
     setStatusOpen(false);
-    setNotificationsOpen((open) => !open);
+    setNotificationsOpen((open) => {
+      if (!open) onNotificationsRead?.();
+      return !open;
+    });
   }
 
   return (
@@ -190,21 +192,7 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
             <button ref={statusBtnRef} className="availability-button" onClick={() => { setNotificationsOpen(false); setProfileOpen(false); setStatusOpen((open) => !open); }} title="Change your status" aria-label="Change your status" aria-expanded={statusOpen}>
               <i className={`availability-dot status-${user.availability_status || user.presence || "offline"}`} /><span>{availabilityOptions.find(([value]) => value === (user.availability_status || user.presence))?.[1] || "Offline"}</span><ChevronDown size={14} />
             </button>
-            <button
-              ref={notificationsBtnRef}
-              className="icon-button notification-button"
-              onClick={toggleNotifications}
-              title="Notifications"
-              aria-label={`Open notifications (${unreadNotificationCount} unread)`}
-              aria-expanded={notificationsOpen}
-            >
-              <Bell size={20} />
-              {unreadNotificationCount > 0 && (
-                <span className="notification-badge" aria-label={`${unreadNotificationCount} unread`}>
-                  {unreadNotificationCount > 9 ? "9+" : unreadNotificationCount}
-                </span>
-              )}
-            </button>
+            <button ref={notificationsBtnRef} className="icon-button notification-button" onClick={toggleNotifications} title="Notifications" aria-label="Open notifications" aria-expanded={notificationsOpen}><Bell size={20} />{notifications.some((item) => item.unread) && <i />}</button>
             <button ref={profileBtnRef} className="top-user" onClick={() => { setNotificationsOpen(false); setStatusOpen(false); setProfileOpen(!profileOpen); }}><Avatar person={user} size="sm" /><ChevronDown size={15} /></button>
           </div>
           {statusOpen && <div ref={statusMenuRef} className="availability-menu">
@@ -213,99 +201,16 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
               <i className={`availability-dot status-${value}`} /><span>{label}</span>{(user.availability_status || user.presence) === value && <Check size={15} />}
             </button>)}
           </div>}
-          {notificationsOpen && (
-            <div ref={notificationsMenuRef} className="notification-menu">
-              <header>
-                <div>
-                  <b>Notifications</b>
-                  <small>
-                    {unreadNotificationCount > 0
-                      ? `${unreadNotificationCount} unread`
-                      : notifications.length
-                      ? "All caught up"
-                      : "You’re all caught up"}
-                  </small>
-                </div>
-                {unreadNotificationCount > 0 ? (
-                  <button
-                    type="button"
-                    className="notification-mark-all"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onNotificationsRead?.();
-                    }}
-                    title="Mark all notifications as read"
-                  >
-                    <CheckCheck size={14} /> Mark all read
-                  </button>
-                ) : notifications.length > 0 ? (
-                  <span className="notification-all-read">
-                    <CheckCheck size={14} /> Read
-                  </span>
-                ) : null}
-              </header>
-              <div className="notification-menu-list">
-                {notifications.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`notification-menu-item ${item.unread ? "unread" : "read"}`}
-                    onClick={() => {
-                      onNotificationOpen?.(item);
-                      setNotificationsOpen(false);
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        onNotificationOpen?.(item);
-                        setNotificationsOpen(false);
-                      }
-                    }}
-                  >
-                    <span className={`notification-menu-icon notification-${item.sound || "message"}`}>
-                      <Bell size={16} />
-                    </span>
-                    <span className="notification-menu-content">
-                      <div className="notification-menu-title-row">
-                        <b>{item.title}</b>
-                        {item.unread && <span className="notification-unread-dot" title="Unread" />}
-                      </div>
-                      <small>{item.body}</small>
-                      <time>{new Date(item.receivedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-                    </span>
-                    <div className="notification-menu-action">
-                      {item.unread ? (
-                        <button
-                          type="button"
-                          className="notification-read-btn"
-                          title="Mark as read"
-                          aria-label={`Mark "${item.title}" as read`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onNotificationRead?.(item.id);
-                          }}
-                        >
-                          <Check size={12} />
-                          <span>Read</span>
-                        </button>
-                      ) : (
-                        <span className="notification-read-status" title="Read">
-                          <CheckCheck size={14} />
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {!notifications.length && (
-                  <div className="notification-menu-empty">
-                    <Bell size={24} />
-                    <b>No notifications yet</b>
-                    <p>New messages, meetings, and announcements will appear here.</p>
-                  </div>
-                )}
-              </div>
+          {notificationsOpen && <div ref={notificationsMenuRef} className="notification-menu">
+            <header><div><b>Notifications</b><small>{notifications.length ? `${notifications.length} recent` : "You’re all caught up"}</small></div>{notifications.length > 0 && <span><CheckCheck size={15} /> Read</span>}</header>
+            <div className="notification-menu-list">
+              {notifications.map((item) => <button key={item.id} onClick={() => { onNotificationOpen?.(item); setNotificationsOpen(false); }}>
+                <span className={`notification-menu-icon notification-${item.sound || "message"}`}><Bell size={16} /></span>
+                <span><b>{item.title}</b><small>{item.body}</small><time>{new Date(item.receivedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></span>
+              </button>)}
+              {!notifications.length && <div className="notification-menu-empty"><Bell size={24} /><b>No notifications yet</b><p>New messages, meetings, and announcements will appear here.</p></div>}
             </div>
-          )}
+          </div>}
           {profileOpen && (
             <div ref={profileMenuRef} className="profile-menu">
               <div><Avatar person={user} /><span><b>{user.full_name}</b><small>{user.email}</small></span></div>
