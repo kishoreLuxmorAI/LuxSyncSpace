@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Ban, CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, UserPlus, Users, Video } from "lucide-react";
 import { format } from "date-fns";
 import { Avatar } from "../components/Avatar";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { Modal } from "../components/Modal";
 
 export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, onScheduleMeeting, onCancelEvent, onAddAttendees, onToast }) {
@@ -11,10 +12,15 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
   const scheduled = events.filter((event) => new Date(event.ends_at) > new Date());
   const upcoming = scheduled.filter((event) => !event.cancelled_at);
 
-  function copyLink(event) {
-    const url = new URL(window.location.href);
+  async function copyLink(event) {
+    const url = new URL(window.location.pathname, window.location.origin);
     url.searchParams.set("meeting", event.id);
-    navigator.clipboard.writeText(url.toString()).then(() => onToast("Meeting link copied"));
+    const success = await copyTextToClipboard(url.toString());
+    if (success) {
+      onToast("Meeting link copied to clipboard");
+    } else {
+      onToast("Could not copy meeting link");
+    }
   }
 
   return (
@@ -37,7 +43,7 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
             return <article className={cancelled ? "cancelled" : ""} key={event.id}>
               <div className="meeting-date"><b>{format(new Date(event.starts_at), "d")}</b><small>{format(new Date(event.starts_at), "MMM")}</small></div>
               <div className="meeting-list-main">{cancelled ? <span className="meeting-cancelled-chip"><Ban size={13} /> Cancelled</span> : <span className="meeting-mode-chip">{event.meeting_mode === "audio" ? <Mic size={13} /> : <Video size={13} />} {event.meeting_mode === "audio" ? "Voice" : "Video"}</span>}<h3>{event.title}</h3><p><Clock size={14} /> {format(new Date(event.starts_at), "EEE, MMM d · h:mm a")} – {format(new Date(event.ends_at), "h:mm a")}</p>{cancelled && event.cancellation_reason && <p className="cancellation-reason">Reason: {event.cancellation_reason}</p>}<button type="button" className="attendee-stack" onClick={() => setPeopleTarget(event)} aria-label={`View ${event.attendees?.length || 0} invited people`}>{event.attendees?.slice(0, 5).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color, full_name: person.name }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} invited · View people</small></button></div>
-              <div className="meeting-list-actions">{!cancelled && <><button className="button button-secondary button-small" onClick={() => copyLink(event)}><Copy size={14} /> Copy link</button><button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button></>}{canCancel && <button className="button button-danger button-small" onClick={() => setCancelTarget(event)}><Ban size={14} /> Cancel</button>}</div>
+              <div className="meeting-list-actions">{!cancelled && <><button className="button button-secondary button-small" onClick={() => copyLink(event)}><Copy size={14} /> Copy link</button><button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}>{event.meeting_mode === "audio" ? <Mic size={14} /> : <Video size={14} />} Join</button></>}{canCancel && <button className="button button-danger button-small" onClick={() => setCancelTarget(event)}><Ban size={14} /> Cancel</button>}</div>
             </article>;
           })}
           {!scheduled.length && <div className="empty-state"><CalendarClock size={30} /><h3>No scheduled meetings</h3><p>Schedule a meeting or start an instant room.</p></div>}
@@ -150,7 +156,7 @@ function InstantMeeting({ people, onStart, onClose }) {
         })}</div>
         <div className="meeting-share-note"><Send size={15} /><span>The meeting link will be sent to each selected employee’s direct chat with a notification.</span></div>
       </div>
-      <footer className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={busy}><Video size={17} /> {busy ? "Starting…" : "Start and share"}</button></footer>
+      <footer className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={busy}>{mode === "audio" ? <Mic size={17} /> : <Video size={17} />} {busy ? "Starting…" : "Start and share"}</button></footer>
     </form>
   </Modal>;
 }
