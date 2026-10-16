@@ -19,7 +19,6 @@ import { InAppNotification } from "./components/InAppNotification";
 import { NotificationSetupPrompt } from "./components/NotificationSetupPrompt";
 import { dismissIncomingCallNotification } from "./lib/notifications";
 import { OnboardingTutorial } from "./components/OnboardingTutorial";
-import { DEV_MOCK_NOTIFICATIONS, USE_DEV_MOCK_NOTIFICATIONS } from "./lib/mockNotifications";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -35,9 +34,7 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [incomingCall, setIncomingCall] = useState(null);
   const [notification, setNotification] = useState(null);
-  const [notifications, setNotifications] = useState(() =>
-    USE_DEV_MOCK_NOTIFICATIONS ? DEV_MOCK_NOTIFICATIONS : []
-  );
+  const [notifications, setNotifications] = useState([]);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [chatParams, setChatParams] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -137,12 +134,6 @@ export default function App() {
     setNotification(null);
     setNotifications((current) => current.map((entry) => entry.id === item.id ? { ...entry, unread: false } : entry));
     navigate(item.view || "home");
-  }
-
-  function markNotificationRead(id) {
-    setNotifications((current) =>
-      current.map((entry) => (entry.id === id ? { ...entry, unread: false } : entry))
-    );
   }
 
   useEffect(() => {
@@ -331,7 +322,7 @@ export default function App() {
   const pageProps = { user, data, navigate, onNewEvent: (initial) => setNewEvent(initial || true), onRefresh: refreshWorkspace, onToast: setToast, onJoinMeeting: joinMeeting, onStartMeeting: startInstantMeeting };
   return (
     <>
-      <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={() => setNotifications((current) => current.map((item) => ({ ...item, unread: false })))} onNotificationRead={markNotificationRead} onNotificationOpen={openNotification}>
+      <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={() => setNotifications((current) => current.map((item) => ({ ...item, unread: false })))} onNotificationOpen={openNotification}>
         {active === "home" && <Home {...pageProps} />}
         {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={chatParams.channel} initialPersonId={chatParams.direct} onStartCall={startCall} />}
         {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={(initial) => setNewEvent(initial || true)} onCancelEvent={cancelEvent} onAddAttendees={addMeetingAttendees} onToast={setToast} />}
