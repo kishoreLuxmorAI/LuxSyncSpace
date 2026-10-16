@@ -300,16 +300,7 @@ async function currentRole(userId) {
   return user?.role;
 }
 
-async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false }) {
-  if (!recipientIds.length) return;
-  const meetingUrl = `${config.appUrl}/?meeting=${event.id}`;
-  const messageBody = `${isCall ? `${event.meeting_mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${event.title}\n${meetingUrl}`;
-  const messages = await sql`
-    INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
-    SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id, ${messageBody}
-    FROM unnest(${recipientIds}::uuid[]) AS recipient_id
-    RETURNING id, recipient_id, body, sent_at
-  `;
+function notifyMeetingInvitees({ req, event, messages, organizer, isCall = false }) {
   for (const message of messages) {
     const realtimeMessage = {
       ...message,
@@ -340,6 +331,19 @@ async function shareMeetingInvitation({ req, event, recipientIds, organizer, isC
       } : {})
     }).catch(console.error);
   }
+}
+
+async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false }) {
+  if (!recipientIds.length) return;
+  const meetingUrl = `${config.appUrl}/?meeting=${event.id}`;
+  const messageBody = `${isCall ? `${event.meeting_mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${event.title}\n${meetingUrl}`;
+  const messages = await sql`
+    INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+    SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id, ${messageBody}
+    FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+    RETURNING id, recipient_id, body, sent_at
+  `;
+  notifyMeetingInvitees({ req, event, messages, organizer, isCall });
 }
 
 workspaceRouter.post("/channels", async (req, res, next) => {
@@ -1233,24 +1237,69 @@ workspaceRouter.post("/meetings/instant", async (req, res, next) => {
       isCall: z.boolean().default(false)
     }).parse(req.body || {});
     const recipientIds = [...new Set(input.attendeeIds)].filter((id) => id !== req.auth.userId);
-    const validRecipients = recipientIds.length ? await sql`
-      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND id = ANY(${recipientIds}::uuid[])
-    ` : [];
-    if (validRecipients.length !== recipientIds.length) return res.status(400).json({ error: "One or more selected employees are unavailable" });
-    const [event] = await sql`
-      INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at, is_online, meeting_mode)
-      VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, 'Instant LuxSyncspace meeting',
-        'LuxSyncspace meeting', NOW(), NOW() + INTERVAL '1 hour', TRUE, ${input.mode})
-      RETURNING *
+    const messagePrefix = `${input.isCall ? `${input.mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${input.title}\n${config.appUrl}/?meeting=`;
+    const [result] = await sql`
+      WITH requested_recipients AS (
+        SELECT DISTINCT recipient_id
+        FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+      ),
+      valid_recipients AS (
+        SELECT users.id
+        FROM users
+        JOIN requested_recipients ON requested_recipients.recipient_id = users.id
+        WHERE users.organization_id = ${req.auth.organizationId}
+      ),
+      recipient_validation AS (
+        SELECT
+          (SELECT COUNT(*) FROM requested_recipients)
+          = (SELECT COUNT(*) FROM valid_recipients) AS valid
+      ),
+      created_event AS (
+        INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at, is_online, meeting_mode)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, 'Instant LuxSyncspace meeting',
+          'LuxSyncspace meeting', NOW(), NOW() + INTERVAL '1 hour', TRUE, ${input.mode}
+        FROM recipient_validation
+        WHERE valid
+        RETURNING *
+      ),
+      added_attendees AS (
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT created_event.id, attendee.user_id, 'accepted'
+        FROM created_event
+        CROSS JOIN LATERAL (
+          SELECT ${req.auth.userId}::uuid AS user_id
+          UNION ALL
+          SELECT id FROM valid_recipients
+        ) AS attendee
+        ON CONFLICT DO NOTHING
+        RETURNING event_id
+      ),
+      organizer AS (
+        SELECT id, full_name, initials, avatar_color, title
+        FROM users
+        WHERE id = ${req.auth.userId}
+      ),
+      created_messages AS (
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient.id,
+          ${messagePrefix} || created_event.id::text
+        FROM created_event
+        CROSS JOIN valid_recipients AS recipient
+        RETURNING id, recipient_id, body, sent_at
+      )
+      SELECT
+        recipient_validation.valid AS recipients_valid,
+        (SELECT to_jsonb(created_event) FROM created_event) AS event,
+        (SELECT to_jsonb(organizer) FROM organizer) AS organizer,
+        COALESCE(
+          (SELECT json_agg(to_jsonb(created_messages)) FROM created_messages),
+          '[]'::json
+        ) AS messages
+      FROM recipient_validation
     `;
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${event.id}, attendee_id, 'accepted'
-      FROM unnest(${[req.auth.userId, ...recipientIds]}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
-    const [organizer] = await sql`SELECT id, full_name, initials, avatar_color, title FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds, organizer, isCall: input.isCall });
+    if (!result.recipients_valid) return res.status(400).json({ error: "One or more selected employees are unavailable" });
+    const { event, organizer, messages } = result;
+    notifyMeetingInvitees({ req, event, messages, organizer, isCall: input.isCall });
     invalidateCache(`events:${req.auth.organizationId}`);
     res.status(201).json(event);
   } catch (error) { next(error); }
