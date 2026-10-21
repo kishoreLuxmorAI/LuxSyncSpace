@@ -427,7 +427,6 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .meeting-mode-select > button { min-height: 60px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; color: #738095; background: white; display: flex; align-items: center; gap: 9px; text-align: left; }
 .meeting-mode-select > button.active { color: var(--blue); border-color: #9eb5ea; background: var(--blue-soft); }
 .meeting-mode-select span { display: grid; gap: 3px; }.meeting-mode-select b { color: var(--navy); font-size: 10px; }.meeting-mode-select small { font-size: 8px; }
-.cancel-meeting-form { padding: 24px; text-align: center; }.cancel-meeting-icon { width: 49px; height: 49px; margin: 0 auto; border-radius: 13px; color: #b43748; background: #ffedf0; display: grid; place-items: center; }.cancel-meeting-form h3 { margin: 13px 0 6px; font-size: 16px; }.cancel-meeting-form > p { max-width: 430px; margin: 0 auto 18px; color: #748095; font-size: 10px; line-height: 1.6; }.cancel-meeting-form label { display: grid; gap: 6px; text-align: left; color: #37445a; font-size: 10px; font-weight: 700; }.cancel-meeting-form textarea { min-height: 82px; padding: 10px; border: 1px solid #dce2ea; border-radius: 8px; outline: 0; resize: vertical; font: inherit; font-weight: 500; }.cancel-meeting-form textarea:focus { border-color: #7898e8; box-shadow: 0 0 0 3px rgba(37,87,214,.08); }
 
 /* Incoming internal call */
 .incoming-call { position: fixed; z-index: 650; right: 22px; top: 78px; width: 290px; padding: 22px; border: 1px solid #d8e0ec; border-radius: 15px; background: white; box-shadow: 0 22px 60px rgba(16,31,56,.3); text-align: center; animation: modalIn .22s ease; }
@@ -574,8 +573,10 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .empty-state h3 { color: #536075; font-size: 15px; margin: 10px 0 5px; }.empty-state p { font-size: 11px; }
 
 /* Modals and notices */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(14,24,43,.48); backdrop-filter: blur(3px); z-index: 100; display: grid; place-items: center; padding: 18px; animation: fadeIn .16s ease; }
-.modal { width: min(100%, 550px); max-height: calc(100vh - 36px); overflow-y: auto; background: white; border-radius: 14px; box-shadow: 0 24px 70px rgba(10,20,40,.25); animation: modalIn .2s ease; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(14,24,43,.48); z-index: 100; display: grid; place-items: center; padding: 18px; }
+.modal { width: min(100%, 550px); max-height: calc(100vh - 36px); overflow-y: auto; background: white; border-radius: 14px; box-shadow: 0 24px 70px rgba(10,20,40,.25); }
+.cancel-meeting-dialog { padding: 0; border: 0; margin: auto; }
+.cancel-meeting-dialog::backdrop { background: rgba(14,24,43,.48); }
 .modal-wide { width: min(100%, 720px); }
 .modal-header { min-height: 74px; padding: 17px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
 .modal-header h2 { font-size: 17px; margin: 0 0 3px; }.modal-header p { margin: 0; color: #8490a1; font-size: 10px; }
@@ -591,6 +592,13 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .event-form input, .event-form textarea, .event-form select { width: 100%; border: 1px solid #dce2ea; border-radius: 8px; background: #fbfcfd; outline: 0; padding: 9px 10px; font-size: 11px; color: var(--navy); }
 .event-form input:focus, .event-form textarea:focus, .event-form select:focus { border-color: #7898e8; box-shadow: 0 0 0 3px rgba(37,87,214,.08); }
 .event-form textarea { min-height: 75px; resize: vertical; }
+.cancel-meeting-form { padding: 24px; text-align: center; }
+.cancel-meeting-icon { width: 49px; height: 49px; margin: 0 auto; border-radius: 13px; color: #b43748; background: #ffedf0; display: grid; place-items: center; }
+.cancel-meeting-form h3 { margin: 13px 0 6px; font-size: 16px; }
+.cancel-meeting-form > p { max-width: 430px; margin: 0 auto 18px; color: #748095; font-size: 10px; line-height: 1.6; }
+.cancel-meeting-form label { display: grid; gap: 6px; text-align: left; color: #37445a; font-size: 10px; font-weight: 700; }
+.cancel-meeting-form textarea { min-height: 82px; padding: 10px; border: 1px solid #dce2ea; border-radius: 8px; outline: 0; resize: vertical; font: inherit; font-weight: 500; }
+.cancel-meeting-form textarea:focus { border-color: #7898e8; box-shadow: 0 0 0 3px rgba(37,87,214,.08); }
 .event-form select[multiple] { height: 86px; }
 .event-form small { color: #8b95a4; font-size: 9px; }
 .schedule-event-modal { display: flex; flex-direction: column; overflow: hidden; }
