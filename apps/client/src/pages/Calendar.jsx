@@ -173,7 +173,7 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
                 )}
                 {layoutDayEvents(events, day, startHour, hoursCount)
                   .map(({ event, startMinute, endMinute, lane, laneCount }) => {
-                    const unavailable = Boolean(event.cancelled_at || event.ended_at);
+                    const unavailable = Boolean(event.cancelled_at || event.ended_at || event.pending);
                     const top = ((startMinute - startHour * 60) / 60) * 64;
                     const height = ((endMinute - startMinute) / 60) * 64;
                     return (
@@ -191,7 +191,7 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
                         }}
                       >
                         <b>{event.cancelled_at ? `Cancelled: ${event.title}` : event.ended_at ? `Ended: ${event.title}` : event.title}</b>
-                        <small>{event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.ended_at ? "Ended by organizer" : eventTime(event.starts_at)}</small>
+                        <small>{event.pending ? "Saving…" : event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.ended_at ? "Ended by organizer" : eventTime(event.starts_at)}</small>
                       </button>
                     );
                   })}
@@ -208,7 +208,7 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
                     {dayEvents.map((event) => (
                       <button
                         className={event.cancelled_at ? "cancelled" : event.ended_at ? "ended" : ""}
-                        disabled={Boolean(event.cancelled_at || event.ended_at)}
+                        disabled={Boolean(event.cancelled_at || event.ended_at || event.pending)}
                         onClick={() => onJoinMeeting(event)}
                         key={event.id}
                         style={{ "--event": event.color }}
@@ -216,7 +216,7 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
                         <time>{eventTime(event.starts_at)}</time>
                         <span>
                           <b>{event.cancelled_at ? `Cancelled: ${event.title}` : event.ended_at ? `Ended: ${event.title}` : event.title}</b>
-                          <small>{event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.ended_at ? "Ended by organizer" : event.location || (event.is_online ? "LuxSyncspace meeting" : "No location")}</small>
+                          <small>{event.pending ? "Saving…" : event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.ended_at ? "Ended by organizer" : event.location || (event.is_online ? "LuxSyncspace meeting" : "No location")}</small>
                         </span>
                         {event.cancelled_at || event.ended_at ? <span className="calendar-cancelled-mark">×</span> : event.is_online && <Video size={17} />}
                       </button>
@@ -232,12 +232,14 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
           <header><span className="metric-icon blue"><CalendarDays size={19} /></span><div><h2>Up next</h2><p>{format(new Date(), "EEEE, MMMM d")}</p></div></header>
           <div className="agenda-list">
             {upcomingEvents.map((event) => {
-              const unavailable = Boolean(event.cancelled_at || event.ended_at);
+              const unavailable = Boolean(event.cancelled_at || event.ended_at || event.pending);
               return (
                 <article className={event.cancelled_at ? "cancelled" : event.ended_at ? "ended" : ""} key={event.id} style={{ "--event": event.color }}>
                   <span className="agenda-time">{eventTime(event.starts_at)}</span>
                   <div>
-                    {unavailable && <span className="agenda-status"><Ban size={12} /> {event.cancelled_at ? "Cancelled" : "Ended"}</span>}
+                    {event.pending
+                      ? <span className="agenda-status">Saving…</span>
+                      : unavailable && <span className="agenda-status"><Ban size={12} /> {event.cancelled_at ? "Cancelled" : "Ended"}</span>}
                     <h3>{event.title}</h3>
                     <p><Clock size={14} /> {eventTime(event.starts_at)} – {eventTime(event.ends_at)}</p>
                     <p><MapPin size={14} /> {event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.ended_at ? "Ended by organizer" : event.location}</p>
