@@ -279,8 +279,8 @@ export default function App() {
           isCall: Boolean(options.isCall)
         })
       });
-      await refreshWorkspace();
       joinMeeting(meeting);
+      refreshWorkspace().catch((error) => console.error("Could not refresh workspace after starting meeting", error));
     } catch (error) { setToast(error.message); }
   }
 
