@@ -1160,24 +1160,65 @@ workspaceRouter.post("/events", async (req, res, next) => {
     }).parse(req.body);
     if (new Date(input.endsAt) <= new Date(input.startsAt)) return res.status(400).json({ error: "End time must be after start time" });
     const selectedAttendees = [...new Set(input.attendeeIds)].filter((id) => id !== req.auth.userId);
-    const validAttendees = selectedAttendees.length ? await sql`
-      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND id = ANY(${selectedAttendees}::uuid[])
-    ` : [];
-    if (validAttendees.length !== selectedAttendees.length) return res.status(400).json({ error: "One or more selected employees are unavailable" });
-    const [event] = await sql`
-      INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at)
-      VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, ${input.description}, ${input.location}, ${input.startsAt}, ${input.endsAt})
-      RETURNING *
+    const [result] = await sql`
+      WITH requested_attendees AS (
+        SELECT DISTINCT attendee_id AS id
+        FROM unnest(${selectedAttendees}::uuid[]) AS attendee_id
+      ),
+      valid_attendees AS (
+        SELECT users.id
+        FROM users
+        JOIN requested_attendees ON requested_attendees.id = users.id
+        WHERE users.organization_id = ${req.auth.organizationId}
+      ),
+      attendee_validation AS (
+        SELECT COUNT(*) = (SELECT COUNT(*) FROM requested_attendees) AS valid
+        FROM valid_attendees
+      ),
+      created_event AS (
+        INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, ${input.description},
+          ${input.location}, ${input.startsAt}, ${input.endsAt}
+        WHERE (SELECT valid FROM attendee_validation)
+        RETURNING *
+      ),
+      added_attendees AS (
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT created_event.id, attendee.id, 'accepted'
+        FROM created_event
+        CROSS JOIN (
+          SELECT ${req.auth.userId}::uuid AS id
+          UNION
+          SELECT id FROM requested_attendees
+        ) AS attendee
+        ON CONFLICT DO NOTHING
+        RETURNING event_id
+      ),
+      organizer AS (
+        SELECT full_name, initials, avatar_color
+        FROM users
+        WHERE id = ${req.auth.userId}
+      ),
+      created_messages AS (
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, requested_attendees.id,
+          ${`Meeting invitation: ${input.title}\n${config.appUrl}/?meeting=`} || created_event.id::text
+        FROM created_event
+        CROSS JOIN requested_attendees
+        RETURNING id, recipient_id, body, sent_at
+      )
+      SELECT attendee_validation.valid AS attendees_valid,
+        (SELECT to_jsonb(created_event) FROM created_event) AS event,
+        (SELECT to_jsonb(organizer) FROM organizer) AS organizer,
+        COALESCE(
+          (SELECT json_agg(to_jsonb(created_messages)) FROM created_messages),
+          '[]'::json
+        ) AS messages
+      FROM attendee_validation
     `;
-    const allAttendeeIds = [...new Set([req.auth.userId, ...input.attendeeIds])];
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${event.id}, attendee_id, 'accepted' FROM unnest(${allAttendeeIds}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
-    const attendeeIds = selectedAttendees;
-    const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds: attendeeIds, organizer });
+    if (!result.attendees_valid) return res.status(400).json({ error: "One or more selected employees are unavailable" });
+    const { event, organizer, messages } = result;
+    notifyMeetingInvitees({ req, event, messages, organizer });
     invalidateCache(`events:${req.auth.organizationId}`);
     res.status(201).json(event);
   } catch (error) { next(error); }
