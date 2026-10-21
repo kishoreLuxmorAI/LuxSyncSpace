@@ -113,18 +113,15 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
   const [errorMessage, setErrorMessage] = useState("");
 
   const [form, setForm] = useState({
-    title: initialData?.title || "",
-    description: initialData?.description || "",
-    location: initialData?.location || "",
-    attendeeIds: initialData?.attendeeIds || []
+    title: "",
+    description: "",
+    location: "",
+    attendeeIds: []
   });
   const [busy, setBusy] = useState(false);
   const [attendeeQuery, setAttendeeQuery] = useState("");
 
-  const update = (key, value) => {
-    setErrorMessage("");
-    setForm((current) => ({ ...current, [key]: value }));
-  };
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const filteredPeople = people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(attendeeQuery.toLowerCase())
   );
@@ -177,8 +174,6 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
         startsAt: startsDate.toISOString(),
         endsAt: endsDate.toISOString()
       });
-    } catch (error) {
-      setErrorMessage(error.message || "Unable to schedule the event. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -233,7 +228,7 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
             </div>
           </div>
         </div>
-        {errorMessage && <p className="event-form-error" role="alert">{errorMessage}</p>}
+        {errorMessage && <p className="event-form-error">{errorMessage}</p>}
         <label>
           <span>Location</span>
           <div className="input-icon">
@@ -293,7 +288,7 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
         </label>
         <footer className="modal-actions">
           <button type="button" className="button button-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="button button-primary" disabled={busy}>
+          <button className="button button-primary" disabled={busy}>
             <CalendarPlus size={17} /> {busy ? "Scheduling…" : "Schedule event"}
           </button>
         </footer>
