@@ -181,12 +181,35 @@ export default function App() {
   }
 
   async function cancelEvent(event, reason = "") {
-    const result = await api(`/events/${event.id}`, {
-      method: "DELETE",
-      body: JSON.stringify({ reason })
-    });
-    await refreshWorkspace();
-    setToast(result.message);
+    const optimisticCancelledAt = new Date().toISOString();
+    setData((current) => ({
+      ...current,
+      events: current.events.map((item) => item.id === event.id
+        ? { ...item, cancelled_at: optimisticCancelledAt, cancellation_reason: reason }
+        : item)
+    }));
+
+    try {
+      const result = await api(`/events/${event.id}`, {
+        method: "DELETE",
+        body: JSON.stringify({ reason })
+      });
+      setData((current) => ({
+        ...current,
+        events: current.events.map((item) => item.id === event.id
+          ? { ...item, ...result.event }
+          : item)
+      }));
+      setToast(result.message);
+    } catch (error) {
+      setData((current) => ({
+        ...current,
+        events: current.events.map((item) => item.id === event.id && item.cancelled_at === optimisticCancelledAt
+          ? event
+          : item)
+      }));
+      setToast(error.message || "Could not cancel this event. Please try again.");
+    }
   }
 
   async function addMeetingAttendees(event, attendeeIds) {

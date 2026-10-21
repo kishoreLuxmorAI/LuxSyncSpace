@@ -1303,38 +1303,51 @@ workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
     if (!canCancel) return res.status(403).json({ error: "Only the organizer, HR, or a senior leader can cancel this event" });
     if (event.cancelled_at) return res.json({ event, message: "This event is already cancelled" });
 
+    const [attendees, cancelledBy] = await Promise.all([
+      sql`
+        SELECT ea.user_id FROM event_attendees ea
+        WHERE ea.event_id = ${eventId} AND ea.user_id <> ${req.auth.userId}
+      `,
+      sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`
+    ]);
+    if (!cancelledBy) return res.status(401).json({ error: "Cancelling user not found" });
+
     const [cancelled] = await sql`
       UPDATE events
       SET cancelled_at = NOW(), cancelled_by = ${req.auth.userId}, cancellation_reason = ${input.reason}
-      WHERE id = ${eventId}
+      WHERE id = ${eventId} AND cancelled_at IS NULL
       RETURNING *
     `;
-    const attendees = await sql`
-      SELECT ea.user_id FROM event_attendees ea
-      WHERE ea.event_id = ${eventId} AND ea.user_id <> ${req.auth.userId}
-    `;
-    const [cancelledBy] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
+    if (!cancelled) return res.status(409).json({ error: "This event was already cancelled" });
+
+    invalidateCache(`events:${req.auth.organizationId}`);
     const title = `Cancelled: ${event.title}`;
     const body = `${cancelledBy.full_name} cancelled this ${event.is_online ? "meeting" : "event"}${input.reason ? `. Reason: ${input.reason}` : "."}`;
     const recipientIds = attendees.map((attendee) => attendee.user_id);
+
     if (recipientIds.length) {
-      const cancellationMessages = await sql`
-        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
-        SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id,
-          ${`Meeting cancelled: ${event.title}${input.reason ? `\nReason: ${input.reason}` : ""}`}
-        FROM unnest(${recipientIds}::uuid[]) AS recipient_id
-        RETURNING id, recipient_id, body, sent_at
-      `;
-      for (const message of cancellationMessages) {
-        req.app.get("io")?.to(`user:${message.recipient_id}`).emit("direct:message", {
-          ...message,
-          sender_id: req.auth.userId,
-          sender_name: cancelledBy.full_name,
-          initials: cancelledBy.initials,
-          avatar_color: cancelledBy.avatar_color
-        });
+      try {
+        const cancellationMessages = await sql`
+          INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+          SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id,
+            ${`Meeting cancelled: ${event.title}${input.reason ? `\nReason: ${input.reason}` : ""}`}
+          FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+          RETURNING id, recipient_id, body, sent_at
+        `;
+        for (const message of cancellationMessages) {
+          req.app.get("io")?.to(`user:${message.recipient_id}`).emit("direct:message", {
+            ...message,
+            sender_id: req.auth.userId,
+            sender_name: cancelledBy.full_name,
+            initials: cancelledBy.initials,
+            avatar_color: cancelledBy.avatar_color
+          });
+        }
+      } catch (error) {
+        console.error(`Could not save cancellation messages for event ${eventId}`, error);
       }
     }
+
     for (const attendee of attendees) {
       req.app.get("io")?.to(`user:${attendee.user_id}`).emit("event:cancelled", {
         event_id: eventId,
@@ -1346,11 +1359,10 @@ workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
         title,
         body,
         tag: `event-cancelled-${eventId}`,
-        url: "/?view=calendar"
-      }).catch(console.error);
+        url: "/?view=meetings"
+      }).catch((error) => console.error("Could not send event cancellation push notification", error));
     }
     req.app.get("io")?.to(`meeting:${eventId}`).emit("meeting:cancelled", { title, body });
-    invalidateCache(`events:${req.auth.organizationId}`);
     res.json({ event: cancelled, message: "Event cancelled and attendees notified" });
   } catch (error) { next(error); }
 });
