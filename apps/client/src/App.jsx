@@ -78,6 +78,7 @@ export default function App() {
       url
     );
 
+    window.scrollTo(0, 0);
     setChatParams({
       channel: currentChannel,
       direct: currentDirect
