@@ -173,11 +173,68 @@ export default function App() {
   }
 
   async function saveEvent(event) {
-    await api("/events", { method: "POST", body: JSON.stringify(event) });
-    const workspace = await api("/bootstrap");
-    setData(workspace);
+    const pendingId = `pending-${Date.now()}`;
+    const attendees = [...new Set([user.id, ...event.attendeeIds])]
+      .map((id) => {
+        const person = id === user.id ? user : data.people.find((candidate) => candidate.id === id);
+        return person ? {
+          id: person.id,
+          name: person.full_name,
+          initials: person.initials,
+          color: person.avatar_color
+        } : null;
+      })
+      .filter(Boolean);
+    const pendingEvent = {
+      id: pendingId,
+      organizer_id: user.id,
+      organizer_name: user.full_name,
+      title: event.title,
+      description: event.description,
+      location: event.location,
+      starts_at: event.startsAt,
+      ends_at: event.endsAt,
+      color: "#2357d9",
+      is_online: true,
+      meeting_mode: "video",
+      attendees,
+      pending: true
+    };
+
+    setData((current) => ({
+      ...current,
+      events: [...current.events, pendingEvent].sort(
+        (left, right) => new Date(left.starts_at) - new Date(right.starts_at)
+      )
+    }));
     setNewEvent(false);
-    setToast("Event added to your calendar");
+    setToast("Event is being scheduled…");
+
+    try {
+      const createdEvent = await api("/events", {
+        method: "POST",
+        body: JSON.stringify(event)
+      });
+      setData((current) => ({
+        ...current,
+        events: current.events
+          .map((currentEvent) => currentEvent.id === pendingId
+            ? { ...pendingEvent, ...createdEvent, attendees, pending: false }
+            : currentEvent)
+          .sort((left, right) => new Date(left.starts_at) - new Date(right.starts_at))
+      }));
+      setToast("Event added to your calendar");
+      refreshWorkspace().catch((error) => {
+        console.error("Event was scheduled, but the workspace refresh failed.", error);
+      });
+    } catch (error) {
+      setData((current) => ({
+        ...current,
+        events: current.events.filter((currentEvent) => currentEvent.id !== pendingId)
+      }));
+      setNewEvent(event);
+      setToast(`Event was not scheduled: ${error.message}`);
+    }
   }
 
   async function cancelEvent(event, reason = "") {
