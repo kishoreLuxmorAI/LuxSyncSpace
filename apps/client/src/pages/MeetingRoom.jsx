@@ -690,8 +690,6 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
           <MeetingControl active={!micOn} onClick={toggleMic} icon={micOn ? Mic : MicOff} label={micOn ? "Mute" : "Unmute"} />
           {isAudioOnly && <MeetingControl active={!speakerOn} onClick={() => setSpeakerOn((enabled) => !enabled)} icon={speakerOn ? Volume2 : VolumeX} label={speakerOn ? "Speaker" : "Sound off"} />}
           {!isAudioOnly && <MeetingControl active={!cameraOn} onClick={toggleCamera} icon={cameraOn ? Video : VideoOff} label={cameraOn ? "Camera" : "Start video"} />}
-          <button className="mobile-leave" onClick={onLeave}><span><PhoneOff size={20} /></span><small>Leave</small></button>
-          {isOrganizer && <button className="mobile-end-for-all" onClick={() => setConfirmEnd(true)}><span><PhoneOff size={20} /></span><small>End for all</small></button>}
           {!isAudioOnly && <MeetingControl active={screenOn} onClick={shareScreen} icon={MonitorUp} label={screenOn ? "Stop sharing" : "Share screen"} />}
           <MeetingControl active={raised} onClick={toggleHand} icon={Hand} label={raised ? "Lower hand" : "Raise hand"} />
           <MeetingControl active={panel === "chat"} onClick={() => setPanel(panel === "chat" ? null : "chat")} icon={MessageSquareText} label="Chat" />
