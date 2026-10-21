@@ -8,6 +8,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("All");
   const [employmentStatus, setEmploymentStatus] = useState("All");
+  const [viewMode, setViewMode] = useState("grid");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [menuId, setMenuId] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
@@ -72,9 +73,12 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
               </button>)}
             </div>}
           </div>
-          <div className="view-toggle"><button className="active"><Grid2X2 size={17} /></button><button><List size={18} /></button></div>
+          <div className="view-toggle" aria-label="People view">
+            <button type="button" className={viewMode === "grid" ? "active" : ""} onClick={() => setViewMode("grid")} aria-label="Grid view" aria-pressed={viewMode === "grid"} title="Grid view"><Grid2X2 size={17} /></button>
+            <button type="button" className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")} aria-label="List view" aria-pressed={viewMode === "list"} title="List view"><List size={18} /></button>
+          </div>
         </div>
-        <div className="people-grid">
+        <div className={`people-grid${viewMode === "list" ? " people-list" : ""}`}>
           {filtered.map((person) => <article className={`person-card employment-${person.employment_status || "active"}`} key={person.id}>
             <button className="person-more" onClick={() => setMenuId(menuId === person.id ? null : person.id)} aria-label={`Actions for ${person.full_name}`} aria-expanded={menuId === person.id}><MoreHorizontal size={17} /></button>
             {menuId === person.id && <div className="person-menu">
