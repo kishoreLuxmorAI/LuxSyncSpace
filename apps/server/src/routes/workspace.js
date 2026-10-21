@@ -300,16 +300,16 @@ async function currentRole(userId) {
   return user?.role;
 }
 
-async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false }) {
+async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false, messages: insertedMessages }) {
   if (!recipientIds.length) return;
   const meetingUrl = `${config.appUrl}/?meeting=${event.id}`;
   const messageBody = `${isCall ? `${event.meeting_mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${event.title}\n${meetingUrl}`;
-  const messages = await sql`
-    INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
-    SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id, ${messageBody}
-    FROM unnest(${recipientIds}::uuid[]) AS recipient_id
-    RETURNING id, recipient_id, body, sent_at
-  `;
+  const messages = insertedMessages || await sql`
+      INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+      SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id, ${messageBody}
+      FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+      RETURNING id, recipient_id, body, sent_at
+    `;
   for (const message of messages) {
     const realtimeMessage = {
       ...message,
@@ -1156,24 +1156,49 @@ workspaceRouter.post("/events", async (req, res, next) => {
     }).parse(req.body);
     if (new Date(input.endsAt) <= new Date(input.startsAt)) return res.status(400).json({ error: "End time must be after start time" });
     const selectedAttendees = [...new Set(input.attendeeIds)].filter((id) => id !== req.auth.userId);
-    const validAttendees = selectedAttendees.length ? await sql`
-      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND id = ANY(${selectedAttendees}::uuid[])
-    ` : [];
+    const [validAttendees, organizer] = await Promise.all([
+      selectedAttendees.length ? sql`
+        SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND id = ANY(${selectedAttendees}::uuid[])
+      ` : [],
+      sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`
+    ]);
     if (validAttendees.length !== selectedAttendees.length) return res.status(400).json({ error: "One or more selected employees are unavailable" });
-    const [event] = await sql`
-      INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at)
-      VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, ${input.description}, ${input.location}, ${input.startsAt}, ${input.endsAt})
-      RETURNING *
+    const allAttendeeIds = [...new Set([req.auth.userId, ...selectedAttendees])];
+    const meetingUrlPrefix = `${config.appUrl}/?meeting=`;
+    const invitationMessagePrefix = `Meeting invitation: ${input.title}\n${meetingUrlPrefix}`;
+    const [createdEvent] = await sql`
+      WITH created_event AS (
+        INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at)
+        VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, ${input.description}, ${input.location}, ${input.startsAt}, ${input.endsAt})
+        RETURNING *
+      ),
+      added_attendees AS (
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT created_event.id, attendee_id, 'accepted'
+        FROM created_event
+        CROSS JOIN unnest(${allAttendeeIds}::uuid[]) AS attendee_id
+        ON CONFLICT DO NOTHING
+      ),
+      invitation_messages AS (
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id,
+          ${invitationMessagePrefix} || created_event.id::text
+        FROM created_event
+        CROSS JOIN unnest(${selectedAttendees}::uuid[]) AS recipient_id
+        RETURNING id, recipient_id, body, sent_at
+      )
+      SELECT created_event.*,
+        COALESCE((SELECT json_agg(invitation_messages) FROM invitation_messages), '[]'::json) AS invitation_messages
+      FROM created_event
     `;
-    const allAttendeeIds = [...new Set([req.auth.userId, ...input.attendeeIds])];
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${event.id}, attendee_id, 'accepted' FROM unnest(${allAttendeeIds}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
-    const attendeeIds = selectedAttendees;
-    const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds: attendeeIds, organizer });
+    const { invitation_messages: invitationMessages, ...event } = createdEvent;
+    await shareMeetingInvitation({
+      req,
+      event,
+      recipientIds: selectedAttendees,
+      organizer,
+      messages: invitationMessages
+    });
     invalidateCache(`events:${req.auth.organizationId}`);
     res.status(201).json(event);
   } catch (error) { next(error); }

@@ -53,7 +53,9 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
               <div className="schedule-item" key={event.id} style={{ "--event": event.color }}>
                 <time>{eventTime(event.starts_at)}</time>
                 <span><b>{event.title}</b><small>{event.location}</small></span>
-                {event.is_online && <button className="join-button" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button>}
+                {event.pending
+                  ? <small role="status">Saving…</small>
+                  : event.is_online && <button className="join-button" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button>}
               </div>
             ))}
             {!nextEvents.length && <div className="empty-compact"><Sparkles size={20} /><span>Your calendar is clear.</span></div>}
