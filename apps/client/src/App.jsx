@@ -30,6 +30,7 @@ export default function App() {
   const [meetingId, setMeetingId] = useState(() => new URLSearchParams(window.location.search).get("meeting"));
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [loading, setLoading] = useState(Boolean(authStore.get()));
+  const [sessionError, setSessionError] = useState("");
   const [newEvent, setNewEvent] = useState(false);
   const [toast, setToast] = useState("");
   const [incomingCall, setIncomingCall] = useState(null);
@@ -43,6 +44,23 @@ export default function App() {
       direct: params.get("direct")
     };
   });
+
+  const restoreSession = useCallback(async () => {
+    if (!authStore.get()) return;
+    setLoading(true);
+    setSessionError("");
+    try {
+      const me = await api("/auth/me");
+      setUser(me.user);
+      setTutorialOpen(!me.user.must_change_password && !me.user.onboarding_completed_at);
+      const workspace = await api("/bootstrap");
+      setData(workspace);
+    } catch (error) {
+      if (authStore.get()) setSessionError(error.message || "Unable to restore your session");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const navigate = useCallback((view, { replace = false, channel, direct } = {}) => {
     const next = view || "home";
@@ -78,6 +96,7 @@ export default function App() {
       url
     );
 
+    window.scrollTo(0, 0);
     setChatParams({
       channel: currentChannel,
       direct: currentDirect
@@ -105,12 +124,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!authStore.get()) return;
-    Promise.all([api("/auth/me"), api("/bootstrap")])
-      .then(([me, workspace]) => { setUser(me.user); setData(workspace); setTutorialOpen(!me.user.must_change_password && !me.user.onboarding_completed_at); })
-      .catch(() => authStore.clear())
-      .finally(() => setLoading(false));
-  }, []);
+    restoreSession();
+  }, [restoreSession]);
 
   useEffect(() => {
     if (!toast) return;
@@ -238,12 +253,35 @@ export default function App() {
   }
 
   async function cancelEvent(event, reason = "") {
-    const result = await api(`/events/${event.id}`, {
-      method: "DELETE",
-      body: JSON.stringify({ reason })
-    });
-    await refreshWorkspace();
-    setToast(result.message);
+    const optimisticCancelledAt = new Date().toISOString();
+    setData((current) => ({
+      ...current,
+      events: current.events.map((item) => item.id === event.id
+        ? { ...item, cancelled_at: optimisticCancelledAt, cancellation_reason: reason }
+        : item)
+    }));
+
+    try {
+      const result = await api(`/events/${event.id}`, {
+        method: "DELETE",
+        body: JSON.stringify({ reason })
+      });
+      setData((current) => ({
+        ...current,
+        events: current.events.map((item) => item.id === event.id
+          ? { ...item, ...result.event }
+          : item)
+      }));
+      setToast(result.message);
+    } catch (error) {
+      setData((current) => ({
+        ...current,
+        events: current.events.map((item) => item.id === event.id && item.cancelled_at === optimisticCancelledAt
+          ? event
+          : item)
+      }));
+      setToast(error.message || "Could not cancel this event. Please try again.");
+    }
   }
 
   async function addMeetingAttendees(event, attendeeIds) {
@@ -335,8 +373,8 @@ export default function App() {
           isCall: Boolean(options.isCall)
         })
       });
-      await refreshWorkspace();
       joinMeeting(meeting);
+      refreshWorkspace().catch((error) => console.error("Could not refresh workspace after starting meeting", error));
     } catch (error) { setToast(error.message); }
   }
 
@@ -364,6 +402,7 @@ export default function App() {
   }
 
   if (loading) return <div className="app-loading"><span className="loading-logo">S</span><p>Opening your workspace…</p></div>;
+  if (!user && authStore.get()) return <div className="app-loading" role="alert"><span className="loading-logo">S</span><p>{sessionError || "Your session could not be restored."}</p><button className="button button-primary" onClick={restoreSession}>Try again</button></div>;
   if (!user) return <Login onLogin={login} />;
   if (user.must_change_password) return <ChangePassword user={user} onLogout={logout} onChanged={() => { setUser((current) => ({ ...current, must_change_password: false })); setTutorialOpen(true); setToast("Password updated successfully"); }} />;
   if (meetingId) {

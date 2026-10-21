@@ -66,8 +66,8 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
       notify(event.title, event.body, event.tag, "meeting", "calendar");
     });
     socket.on("event:cancelled", (event) => {
-      notify(event.title, event.body, event.tag, "meeting", "calendar");
-      callbacksRef.current.onRefresh();
+      notify(event.title, event.body, event.tag, "meeting", "meetings");
+      callbacksRef.current.onRefresh?.();
     });
     socket.on("channel:membership-updated", () => {
       callbacksRef.current.onRefresh();

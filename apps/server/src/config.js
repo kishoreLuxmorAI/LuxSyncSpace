@@ -27,7 +27,7 @@ function normalizeOrigin(value) {
 }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-dotenv.config({ path: path.join(root, ".env") });
+dotenv.config({ path: [path.join(root, ".env.local"), path.join(root, ".env")] });
 
 const configuredClientUrls = (process.env.CLIENT_URLS || process.env.CLIENT_URL || "")
   .split(",")

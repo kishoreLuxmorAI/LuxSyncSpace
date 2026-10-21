@@ -3,9 +3,16 @@ import { config } from "../config.js";
 
 const { Pool } = pg;
 
-function createPostgresSql() {
+function createSql() {
   const pool = new Pool({
-    connectionString: config.databaseUrl
+    connectionString: config.databaseUrl,
+    max: 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000
+  });
+
+  pool.on("error", (error) => {
+    console.error("Unexpected PostgreSQL pool error", error);
   });
 
   return async (strings, ...values) => {
@@ -25,4 +32,4 @@ function createPostgresSql() {
   };
 }
 
-export const sql = createPostgresSql();
+export const sql = createSql();
