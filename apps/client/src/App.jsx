@@ -188,9 +188,29 @@ export default function App() {
   }
 
   async function saveEvent(event) {
-    await api("/events", { method: "POST", body: JSON.stringify(event) });
-    const workspace = await api("/bootstrap");
-    setData(workspace);
+    const createdEvent = await api("/events", { method: "POST", body: JSON.stringify(event) });
+    const attendeeIds = new Set([user.id, ...event.attendeeIds]);
+    const attendees = [...attendeeIds]
+      .map((id) => data.people.find((person) => person.id === id) || (id === user.id ? user : null))
+      .filter(Boolean)
+      .map((person) => ({
+        id: person.id,
+        name: person.hide_full_name && person.id !== user.id
+          ? person.display_name || "Team member"
+          : person.full_name,
+        initials: person.initials,
+        color: person.avatar_color
+      }));
+    const nextEvent = {
+      ...createdEvent,
+      organizer_name: user.hide_full_name ? user.display_name || "Team member" : user.full_name,
+      attendees
+    };
+    setData((current) => ({
+      ...current,
+      events: [...current.events.filter((item) => item.id !== nextEvent.id), nextEvent]
+        .sort((first, second) => new Date(first.starts_at) - new Date(second.starts_at))
+    }));
     setNewEvent(false);
     setToast("Event added to your calendar");
   }
