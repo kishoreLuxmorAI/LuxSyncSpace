@@ -29,9 +29,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState("");
-  const [mentionedUsers, setMentionedUsers] = useState([]);
-  const [mentionRange, setMentionRange] = useState(null);
-  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -99,11 +96,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const filteredPeople = useMemo(() => people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department} ${person.employee_id}`.toLowerCase().includes(query.toLowerCase())
   ), [people, query]);
-  const mentionSuggestions = useMemo(() => {
-    if (!mentionRange) return [];
-    const term = mentionRange.query.toLowerCase();
-    return people.filter((person) => person.full_name.toLowerCase().includes(term));
-  }, [people, mentionRange]);
   const visibleMessages = useMemo(() => {
     const term = messageSearch.trim().toLowerCase();
     if (!term) return messages;
@@ -119,8 +111,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     setReactionMessageId(null);
     setReplyingTo(null);
     setEditingMessage(null);
-    setMentionedUsers([]);
-    setMentionRange(null);
   }, [selected, selectedPerson?.id]);
 
   useEffect(() => {
@@ -209,9 +199,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     });
     socketRef.current.on("channel:message-edited", (updated) => {
       if (selectedChannelRef.current !== updated.channelId) return;
-      setMessages((current) => current.map((item) => item.id === updated.id
-        ? { ...item, body: updated.body, mentions: updated.mentions || [], edited_at: updated.edited_at }
-        : item));
+      setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
     });
     socketRef.current.on("channel:message-reaction", (update) => {
       if (selectedChannelRef.current !== update.channelId) return;
@@ -240,9 +228,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     });
     socketRef.current.on("direct:message-edited", (updated) => {
       if (!selectedPersonRef.current || ![updated.sender_id, updated.recipient_id].includes(selectedPersonRef.current.id)) return;
-      setMessages((current) => current.map((item) => item.id === updated.id
-        ? { ...item, body: updated.body, mentions: updated.mentions || [], edited_at: updated.edited_at }
-        : item));
+      setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
     });
     socketRef.current.on("direct:message-deleted", (deleted) => {
       if (!selectedPersonRef.current || ![deleted.sender_id, deleted.recipient_id].includes(selectedPersonRef.current.id)) return;
@@ -322,7 +308,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   useEffect(() => {
     if (!selected) return;
     setMessages([]);
-    setChannelMembers([]);
     Promise.all([api(`/channels/${selected}/messages`), api(`/channels/${selected}/members`)])
       .then(([conversation, membership]) => { setMessages(conversation.messages); setChannelMembers(membership.members); onConversationRead?.("channel", selected); })
       .catch((error) => onToast(error.message));
@@ -350,11 +335,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     const selectedAttachment = attachment;
     const selectedReply = replyingTo;
     const selectedEdit = editingMessage;
-    const selectedMentions = selected || selectedPerson
-      ? mentionedUsers.filter((person) => body.includes(`@${person.name}`))
-      : [];
     setMessage("");
-    setMentionRange(null);
     setAttachment(null);
     setReplyingTo(null);
     setEditingMessage(null);
@@ -362,48 +343,17 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     try {
       if (selectedEdit) {
         const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${selectedEdit.id}` : `/channels/${selected}/messages/${selectedEdit.id}`;
-        const updated = await api(endpoint, {
-          method: "PATCH",
-          body: JSON.stringify({
-            body,
-            mentionUserIds: selectedMentions.map((person) => person.id)
-          })
-        });
-        setMessages((current) => current.map((item) => item.id === updated.id
-          ? { ...item, body: updated.body, mentions: updated.mentions || [], edited_at: updated.edited_at }
-          : item));
+        const updated = await api(endpoint, { method: "PATCH", body: JSON.stringify({ body }) });
+        setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
         onToast("Message edited");
       } else {
-        const externalDirectMentions = selectedPerson
-          ? selectedMentions.some((mention) => mention.id !== user.id && mention.id !== selectedPerson.id)
-          : false;
-        const endpoint = selectedPerson
-          ? externalDirectMentions ? `/direct/${selectedPerson.id}/group` : `/direct/${selectedPerson.id}`
-          : `/channels/${selected}/messages`;
+        const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
         const sent = await api(endpoint, {
           method: "POST",
-          body: JSON.stringify({
-            body,
-            attachmentId: selectedAttachment?.id || null,
-            replyTo: selectedReply?.id || null,
-            mentionUserIds: selectedMentions.map((person) => person.id)
-          })
+          body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null, replyTo: selectedReply?.id || null })
         });
-        if (sent.convertedChannel) {
-          let refreshed = true;
-          try {
-            await onRefresh?.();
-          } catch (error) {
-            onToast(`Group conversation was created, but the chat list could not refresh: ${error.message}`);
-            refreshed = false;
-          }
-          openChannel(sent.convertedChannel.id);
-          if (refreshed) onToast("Group conversation created; the existing chat history was kept");
-        } else {
-          setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
-        }
+        setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
       }
-      setMentionedUsers([]);
     } catch (error) {
       setMessage(body);
       setAttachment(selectedAttachment);
@@ -424,8 +374,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   function editMessage(item) {
     setEditingMessage(item);
     setMessage(item.body);
-    setMentionedUsers(item.mentions || []);
-    setMentionRange(null);
     setAttachment(null);
     setReplyingTo(null);
     setMessageMenuId(null);
@@ -531,78 +479,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       element?.focus();
       element?.setSelectionRange(start + emoji.length, start + emoji.length);
     });
-  }
-
-  function updateMentionRange(value, caretPosition) {
-    if ((!selected && !selectedPerson) || editingMessage) {
-      setMentionRange(null);
-      return;
-    }
-    const prefix = value.slice(0, caretPosition);
-    const match = prefix.match(/(?:^|[^\w])@([^\s@]*)$/);
-    if (!match) {
-      setMentionRange(null);
-      return;
-    }
-    setMentionRange({
-      start: caretPosition - match[1].length - 1,
-      end: caretPosition,
-      query: match[1]
-    });
-    setActiveMentionIndex(0);
-  }
-
-  function changeMessage(event) {
-    const value = event.target.value;
-    setMessage(value);
-    setMentionedUsers((current) => current.filter((person) => value.includes(`@${person.name}`)));
-    updateMentionRange(value, event.target.selectionStart);
-  }
-
-  function selectMention(person) {
-    if (!mentionRange) return;
-    const before = message.slice(0, mentionRange.start);
-    const after = message.slice(mentionRange.end);
-    const token = `@${person.full_name}`;
-    const spacing = after && !/^\s/.test(after) ? " " : "";
-    const nextMessage = `${before}${token}${spacing}${after}`;
-    setMessage(nextMessage);
-    setMentionedUsers((current) => current.some((mention) => mention.id === person.id)
-      ? current
-      : [...current, { id: person.id, name: person.full_name }]);
-    setMentionRange(null);
-    const caret = before.length + token.length + spacing.length;
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(caret, caret);
-    });
-  }
-
-  function handleComposerKeyDown(event) {
-    if (mentionSuggestions.length && mentionRange) {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const direction = event.key === "ArrowDown" ? 1 : -1;
-        setActiveMentionIndex((current) =>
-          (current + direction + mentionSuggestions.length) % mentionSuggestions.length
-        );
-        return;
-      }
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        selectMention(mentionSuggestions[activeMentionIndex]);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setMentionRange(null);
-        return;
-      }
-    }
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      event.currentTarget.form.requestSubmit();
-    }
   }
 
   async function downloadAttachment(item) {
@@ -782,7 +658,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
                     : <span className="message-sent-status" title="Sent" aria-label="Sent"><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
                     {item.forwarded_from_id && !item.deleted_at && <span className="forwarded-label"><Forward size={12} /> Forwarded</span>}
                     {item.reply_to_id && !item.deleted_at && <div className="message-reply-preview"><b>{item.reply_sender_name || "Message"}</b><span>{item.reply_deleted_at ? "This message was deleted" : item.reply_body}</span></div>}
-                    {item.deleted_at ? <p className="deleted-message"><Trash2 size={14} /> This message was deleted</p> : item.body && <MessageBody body={item.body} mentions={item.mentions} />}
+                    {item.deleted_at ? <p className="deleted-message"><Trash2 size={14} /> This message was deleted</p> : item.body && <MessageBody body={item.body} />}
                     {item.attachment_id && <button className="message-attachment" onClick={() => downloadAttachment(item)}>
                       <span><FileText size={19} /></span><span><b>{item.file_name}</b><small>{formatFileSize(item.file_size)}</small></span><Download size={17} />
                     </button>}
@@ -815,7 +691,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             <div ref={endRef} />
           </div>
           <form className="message-composer" onSubmit={send}>
-            {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); setMentionedUsers([]); }} aria-label="Cancel edit"><X size={16} /></button></div>}
+            {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
             {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
             {mentionRange && <div ref={mentionSuggestionsRef} className="mention-suggestions" role="listbox" aria-label="Employees">
@@ -916,12 +792,7 @@ function messageDateLabel(value) {
   });
 }
 
-function MessageBody({ body, mentions = [] }) {
-  const names = [...new Set(mentions.map((mention) => mention.name).filter(Boolean))]
-    .sort((left, right) => right.length - left.length);
-  const mentionPattern = names.length
-    ? new RegExp(`(^|[^\\w])(@(?:${names.map(escapeRegExp).join("|")}))(?=$|[^\\w])`, "g")
-    : null;
+function MessageBody({ body }) {
   const parts = body.split(/(https?:\/\/[^\s]+)/g);
   return <p>{parts.map((part, index) => {
     if (/^https?:\/\//.test(part)) {
@@ -937,22 +808,8 @@ function MessageBody({ body, mentions = [] }) {
         </a>
       );
     }
-    if (!mentionPattern) return part;
-    const rendered = [];
-    let cursor = 0;
-    for (const match of part.matchAll(mentionPattern)) {
-      const mentionStart = match.index + match[1].length;
-      rendered.push(part.slice(cursor, mentionStart));
-      rendered.push(<span className="message-mention" key={`${index}-${mentionStart}`}>{match[2]}</span>);
-      cursor = match.index + match[0].length;
-    }
-    rendered.push(part.slice(cursor));
-    return rendered;
+    return part;
   })}</p>;
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function ForwardMessageModal({ message, channels, people, onForward, onClose }) {
