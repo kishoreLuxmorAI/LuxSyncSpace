@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Ban, CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, UserPlus, Users, Video, X } from "lucide-react";
 import { format } from "date-fns";
 import { Avatar } from "../components/Avatar";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { Modal } from "../components/Modal";
 
 export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, onScheduleMeeting, onCancelEvent, onAddAttendees, onToast }) {
@@ -12,15 +13,15 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
   const scheduled = events.filter((event) => event.cancelled_at || new Date(event.ends_at) > new Date());
   const upcoming = scheduled.filter((event) => !event.cancelled_at);
 
-  function openCancelDialog(event) {
-    setCancelTarget(event);
-    cancelDialogRef.current?.showModal();
-  }
-
-  function copyLink(event) {
-    const url = new URL(window.location.href);
+  async function copyLink(event) {
+    const url = new URL(window.location.pathname, window.location.origin);
     url.searchParams.set("meeting", event.id);
-    navigator.clipboard.writeText(url.toString()).then(() => onToast("Meeting link copied"));
+    const success = await copyTextToClipboard(url.toString());
+    if (success) {
+      onToast("Meeting link copied to clipboard");
+    } else {
+      onToast("Could not copy meeting link");
+    }
   }
 
   return (

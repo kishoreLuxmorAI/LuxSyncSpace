@@ -152,11 +152,38 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .availability-menu > button { width: 100%; height: 37px; padding: 0 9px; border: 0; border-radius: 7px; color: #526075; background: transparent; display: flex; align-items: center; gap: 9px; text-align: left; font-size: 10px; }.availability-menu > button:hover { background: #f3f6fb; }.availability-menu > button span { flex: 1; }.availability-menu > button svg { color: var(--blue); }
 .notification-button { position: relative; }
 .notification-button i { width: 6px; height: 6px; background: #e04c55; border-radius: 50%; position: absolute; top: 7px; right: 7px; border: 1px solid white; }
-.notification-menu { position: absolute; z-index: 55; top: 58px; right: 70px; width: min(380px, calc(100vw - 24px)); max-height: 520px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: white; box-shadow: 0 18px 48px rgba(16,31,55,.2); }
+.notification-button .notification-badge { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 10px; background: #e04c55; color: white; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; border: 2px solid white; line-height: 1; }
+.notification-menu { position: absolute; z-index: 55; top: 58px; right: 70px; width: min(390px, calc(100vw - 24px)); max-height: 520px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: white; box-shadow: 0 18px 48px rgba(16,31,55,.2); }
 .notification-menu > header { padding: 13px 15px; border-bottom: 1px solid var(--soft-line); display: flex; align-items: center; justify-content: space-between; }.notification-menu > header > div { display: grid; gap: 2px; }.notification-menu > header b { font-size: 13px; }.notification-menu > header small { color: #8b96a6; font-size: 8px; }.notification-menu > header > span { color: var(--blue); display: flex; align-items: center; gap: 4px; font-size: 8px; font-weight: 700; }
-.notification-menu-list { max-height: 450px; overflow-y: auto; }.notification-menu-list > button { width: 100%; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--soft-line); background: white; display: grid; grid-template-columns: 35px minmax(0, 1fr); gap: 10px; text-align: left; }.notification-menu-list > button:hover { background: #f7f9fd; }.notification-menu-list > button > span:last-child { min-width: 0; display: grid; gap: 3px; }.notification-menu-list b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }.notification-menu-list small { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: #6f7b8e; font-size: 9px; line-height: 1.4; }.notification-menu-list time { color: #9aa4b3; font-size: 7.5px; }
-.notification-menu-icon { width: 34px; height: 34px; border-radius: 9px; color: var(--blue); background: var(--blue-soft); display: grid; place-items: center; }.notification-menu-icon.notification-meeting { color: #6847b5; background: #f0ebff; }
-.notification-menu-empty { padding: 35px 20px; color: #8792a3; text-align: center; }.notification-menu-empty svg { margin-bottom: 8px; }.notification-menu-empty b { display: block; color: #526075; font-size: 11px; }.notification-menu-empty p { margin: 5px auto 0; max-width: 245px; font-size: 9px; line-height: 1.45; }
+.notification-mark-all { border: 0; background: transparent; color: var(--blue); display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700; padding: 3px 7px; border-radius: 6px; cursor: pointer; transition: background .15s ease; }
+.notification-mark-all:hover { background: var(--blue-soft); }
+.notification-all-read { color: #8b96a6; display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 600; }
+.notification-menu-list { max-height: 450px; overflow-y: auto; }
+.notification-menu-list > button { width: 100%; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--soft-line); background: white; display: grid; grid-template-columns: 35px minmax(0, 1fr); gap: 10px; text-align: left; }
+.notification-menu-list > button:hover { background: #f7f9fd; }
+.notification-menu-list > button > span:last-child { min-width: 0; display: grid; gap: 3px; }
+.notification-menu-item { width: 100%; padding: 12px 14px; border-bottom: 1px solid var(--soft-line); background: white; display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; cursor: pointer; transition: background .15s ease; box-sizing: border-box; }
+.notification-menu-item:hover { background: #f7f9fd; }
+.notification-menu-item.unread { background: #f9fbff; }
+.notification-menu-item.read { opacity: 0.88; }
+.notification-menu-item.read:hover { opacity: 1; }
+.notification-menu-content { min-width: 0; display: grid; gap: 3px; }
+.notification-menu-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.notification-unread-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); flex-shrink: 0; }
+.notification-menu-action { display: flex; align-items: center; justify-content: flex-end; padding-left: 4px; flex-shrink: 0; }
+.notification-read-btn { display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; font-size: 10px; font-weight: 700; color: var(--blue); background: var(--blue-soft); border: 1px solid rgba(37, 87, 214, 0.18); border-radius: 6px; cursor: pointer; transition: all .15s ease; white-space: nowrap; }
+.notification-read-btn:hover { background: var(--blue); color: white; border-color: var(--blue); transform: translateY(-1px); }
+.notification-read-status { display: inline-flex; align-items: center; color: #9aa4b3; padding: 3px 5px; }
+.notification-menu-list b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
+.notification-menu-item.unread b { color: #172033; font-weight: 700; }
+.notification-menu-list small { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: #6f7b8e; font-size: 9px; line-height: 1.4; }
+.notification-menu-list time { color: #9aa4b3; font-size: 7.5px; }
+.notification-menu-icon { width: 34px; height: 34px; border-radius: 9px; color: var(--blue); background: var(--blue-soft); display: grid; place-items: center; flex-shrink: 0; }
+.notification-menu-icon.notification-meeting { color: #6847b5; background: #f0ebff; }
+.notification-menu-empty { padding: 35px 20px; color: #8792a3; text-align: center; }
+.notification-menu-empty svg { margin-bottom: 8px; }
+.notification-menu-empty b { display: block; color: #526075; font-size: 11px; }
+.notification-menu-empty p { margin: 5px auto 0; max-width: 245px; font-size: 9px; line-height: 1.45; }
 .top-user { border: 0; background: transparent; display: flex; align-items: center; gap: 5px; padding: 2px; }
 .profile-menu { position: absolute; right: 24px; top: 58px; background: white; border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 10px; width: 270px; padding: 10px; z-index: 50; }
 .profile-menu > div { display: flex; gap: 10px; padding: 10px; align-items: center; border-bottom: 1px solid var(--soft-line); }
@@ -958,7 +985,8 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .meeting-topbar img { width: 37px; height: 37px; border-radius: 9px; background: white; }
 .meeting-topbar span { display: grid; gap: 3px; }.meeting-topbar b { font-size: 13px; }.meeting-topbar small { color: #93a1b7; font-size: 9px; }
 .meeting-topbar time { padding: 5px 9px; border-radius: 6px; background: #202b3d; font-size: 10px; font-variant-numeric: tabular-nums; }
-.meeting-topbar button { height: 34px; padding: 0 11px; border: 1px solid #39465b; border-radius: 7px; color: #dce4f1; background: #1d293b; display: flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 700; }
+.meeting-topbar button { height: 34px; padding: 0 11px; border: 1px solid #39465b; border-radius: 7px; color: #dce4f1; background: #1d293b; display: flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 700; cursor: pointer; transition: all 0.15s ease; }
+.meeting-topbar button.meeting-copied-btn { background: #133a2d; border-color: #27795a; color: #6ee7b7; }
 .meeting-stage { min-height: 0; height: 100%; max-height: 100%; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1fr); }
 .meeting-stage.with-panel { grid-template-columns: minmax(0, 1fr) 310px; }
 .meeting-grid { min-width: 0; min-height: 0; height: 100%; overflow: hidden; padding: 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 10px; }

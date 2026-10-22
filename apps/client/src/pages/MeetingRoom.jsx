@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, MonitorUp, MoreHorizontal, MoreVertical, PhoneOff,
+  Check, ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, MonitorUp, MoreHorizontal, MoreVertical, PhoneOff,
   Send, Sparkles, Users, Video, VideoOff, Volume2, VolumeX, X
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, SOCKET_URL, socketOptions } from "../lib/api";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { Modal } from "../components/Modal";
 
 const DEFAULT_ICE_SERVERS = [
@@ -47,6 +48,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const [elapsed, setElapsed] = useState("00:00");
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [invitingUserId, setInvitingUserId] = useState(null);
   const [invitedUsers, setInvitedUsers] = useState(new Set());
   const localVideoRef = useRef();
@@ -474,11 +476,21 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     setChatMessage("");
   }
 
-  function copyLink() {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("channel");
-    url.searchParams.set("meeting", meeting.id);
-    navigator.clipboard.writeText(url.toString()).then(() => onToast("Internal meeting link copied"));
+  async function copyLink() {
+    const meetingId = meeting?.id || new URLSearchParams(window.location.search).get("meeting") || "";
+    const url = new URL(window.location.pathname, window.location.origin);
+    if (meetingId) {
+      url.searchParams.set("meeting", meetingId);
+    }
+    const inviteUrl = url.toString();
+    const success = await copyTextToClipboard(inviteUrl);
+    if (success) {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+      onToast?.("Meeting invite link copied to clipboard");
+    } else {
+      onToast?.("Could not copy meeting link");
+    }
   }
 
   async function endForEveryone() {
@@ -637,7 +649,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     <div className={`meeting-room ${isAudioOnly ? "audio-call" : "video-call"}`}>
       <header className="meeting-topbar">
         <div><img src="/icons/luxsyncspace-192.png" alt="" /><span><b>{meeting.title || "LuxSyncspace meeting"}</b><small>{status} · Encrypted media connection</small></span></div>
-        <div><time>{elapsed}</time><button onClick={copyLink}><Copy size={17} /> Copy invite link</button></div>
+        <div><time>{elapsed}</time><button onClick={copyLink} className={copiedLink ? "meeting-copied-btn" : ""} type="button" title="Copy meeting link">{copiedLink ? <Check size={17} /> : <Copy size={17} />} {copiedLink ? "Link copied!" : "Copy invite link"}</button></div>
       </header>
       <main className={`meeting-stage ${panel ? "with-panel" : ""}`}>
         <section className={`meeting-grid participants-${Math.min(allParticipants.length, 6)}`}>
