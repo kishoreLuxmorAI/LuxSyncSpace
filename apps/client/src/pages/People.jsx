@@ -1,5 +1,5 @@
 import { Building2, Check, Copy, Grid2X2, List, MessageSquareText, MoreHorizontal, Pencil, Search, SlidersHorizontal, UserCheck, UserMinus, UserPlus, Users, UserX } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
 import { api } from "../lib/api";
@@ -13,39 +13,6 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
   const [menuId, setMenuId] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [busy, setBusy] = useState(false);
-  const filtersMenuRef = useRef(null);
-  const filtersBtnRef = useRef(null);
-  const personMenuRef = useRef(null);
-
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (
-        filtersOpen &&
-        filtersMenuRef.current &&
-        !filtersMenuRef.current.contains(event.target) &&
-        filtersBtnRef.current &&
-        !filtersBtnRef.current.contains(event.target)
-      ) {
-        setFiltersOpen(false);
-      }
-      if (
-        menuId &&
-        personMenuRef.current &&
-        !personMenuRef.current.contains(event.target) &&
-        !event.target.closest?.(".person-more")
-      ) {
-        setMenuId(null);
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("touchstart", handleClickOutside, { passive: true });
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("touchstart", handleClickOutside);
-    };
-  }, [filtersOpen, menuId]);
   const departments = ["All", ...new Set(people.map((p) => p.department))];
   const filtered = useMemo(() => people.filter((person) =>
     (department === "All" || person.department === department) &&
@@ -93,8 +60,8 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
           <label className="section-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people by name, role, or team" /></label>
           <select value={department} onChange={(e) => setDepartment(e.target.value)}><option value="All">All departments</option>{departments.slice(1).map((item) => <option key={item}>{item}</option>)}</select>
           <div className="people-filter">
-            <button ref={filtersBtnRef} className={`icon-button${employmentStatus !== "All" ? " active" : ""}`} onClick={() => setFiltersOpen((open) => !open)} aria-label="Filter people" aria-expanded={filtersOpen} aria-controls="people-filter-options" title="Filter people"><SlidersHorizontal size={19} /></button>
-            {filtersOpen && <div ref={filtersMenuRef} className="people-filter-menu" id="people-filter-options" aria-label="Filter by employment status">
+            <button className={`icon-button${employmentStatus !== "All" ? " active" : ""}`} onClick={() => setFiltersOpen((open) => !open)} aria-label="Filter people" aria-expanded={filtersOpen} aria-controls="people-filter-options" title="Filter people"><SlidersHorizontal size={19} /></button>
+            {filtersOpen && <div className="people-filter-menu" id="people-filter-options" aria-label="Filter by employment status">
               <b>Employment status</b>
               {[
                 ["All", "All statuses"],
@@ -114,7 +81,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
         <div className={`people-grid${viewMode === "list" ? " people-list" : ""}`}>
           {filtered.map((person) => <article className={`person-card employment-${person.employment_status || "active"}`} key={person.id}>
             <button className="person-more" onClick={() => setMenuId(menuId === person.id ? null : person.id)} aria-label={`Actions for ${person.full_name}`} aria-expanded={menuId === person.id}><MoreHorizontal size={17} /></button>
-            {menuId === person.id && <div ref={personMenuRef} className="person-menu">
+            {menuId === person.id && <div className="person-menu">
               {(person.employment_status || "active") === "active" && person.id !== user.id && <button onClick={() => { onStartChat(person); setMenuId(null); }}><MessageSquareText size={15} /> Start conversation</button>}
               {person.email && <button onClick={() => copyEmail(person)}><Copy size={15} /> Copy email</button>}
               {canInvite && <button onClick={() => { onManage(person); setMenuId(null); }}><Pencil size={15} /> Edit employee details</button>}
