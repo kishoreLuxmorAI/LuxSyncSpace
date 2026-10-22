@@ -59,6 +59,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const socketRef = useRef();
   const selectedPersonRef = useRef(null);
   const selectedChannelRef = useRef(null);
+  const pendingResolutions = useRef(new Map());
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
 
@@ -163,6 +164,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     socketRef.current = io(SOCKET_URL, socketOptions());
     socketRef.current.on("channel:message", (incoming) => {
       if (selectedChannelRef.current !== incoming.channel_id) return;
+      if (incoming.clientTempId) {
+        pendingResolutions.current.get(incoming.clientTempId)?.resolve(incoming);
+      }
       setMessages((current) => {
         if (incoming.clientTempId) {
           const hasTemp = current.some((item) => item.id === incoming.clientTempId || (item.clientTempId && item.clientTempId === incoming.clientTempId));
@@ -222,6 +226,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     socketRef.current.on("direct:message", (incoming) => {
       const otherUserId = incoming.sender_id === user.id ? incoming.recipient_id : incoming.sender_id;
       if (selectedPersonRef.current?.id !== otherUserId) return;
+      if (incoming.clientTempId) {
+        pendingResolutions.current.get(incoming.clientTempId)?.resolve(incoming);
+      }
       setMessages((current) => {
         if (incoming.clientTempId) {
           const hasTemp = current.some((item) => item.id === incoming.clientTempId || (item.clientTempId && item.clientTempId === incoming.clientTempId));
@@ -335,7 +342,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     if (!selectedPerson) return;
     setMessages([]);
     api(`/direct/${selectedPerson.id}`).then(({ messages }) => { setMessages(messages); onConversationRead?.("direct", selectedPerson.id); }).catch((error) => onToast(error.message));
-  }, [selectedPerson]);
+  }, [selectedPerson?.id]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "auto" });
@@ -397,6 +404,16 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     }
 
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    let resolvePending;
+    const pendingPromise = new Promise((resolve) => {
+      resolvePending = resolve;
+    });
+    pendingResolutions.current.set(tempId, { promise: pendingPromise, resolve: resolvePending });
+
+    const senderName = user.hide_full_name
+      ? (user.display_name?.trim() || "Team member")
+      : (user.full_name || user.display_name || "Team member");
+
     const optimisticMessage = {
       id: tempId,
       clientTempId: tempId,
@@ -411,7 +428,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       reply_deleted_at: selectedReply?.deleted_at || null,
       reply_sender_name: selectedReply?.sender_name || null,
       sender_id: user.id,
-      sender_name: user.full_name || user.display_name || "Team member",
+      sender_name: senderName,
       initials: user.initials,
       avatar_color: user.avatar_color,
       title: user.title,
@@ -434,6 +451,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
           clientTempId: tempId
         })
       });
+      const pending = pendingResolutions.current.get(tempId);
+      if (pending) {
+        pending.resolve(sent);
+      }
       setMessages((current) => {
         const hasTemp = current.some((item) => item.id === tempId || (item.clientTempId && item.clientTempId === tempId));
         if (hasTemp) {
@@ -442,6 +463,11 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
         return current.some((item) => item.id === sent.id) ? current : [...current, sent];
       });
     } catch (error) {
+      const pending = pendingResolutions.current.get(tempId);
+      if (pending) {
+        pending.resolve(null);
+        pendingResolutions.current.delete(tempId);
+      }
       setMessages((current) => current.filter((item) => item.id !== tempId && item.clientTempId !== tempId));
       setMessage(body);
       setAttachment(selectedAttachment);
@@ -470,30 +496,45 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   async function reactToMessage(item, emoji) {
     setReactionMessageId(null);
     setMessageMenuId(null);
-    if (String(item.id).startsWith("temp-")) return;
 
     const previousReactions = item.reactions || [];
     const optimisticReactions = computeOptimisticReactions(previousReactions, emoji);
 
     setMessages((current) => current.map((messageItem) =>
-      messageItem.id === item.id ? { ...messageItem, reactions: optimisticReactions } : messageItem
+      (messageItem.id === item.id || (item.clientTempId && messageItem.clientTempId === item.clientTempId))
+        ? { ...messageItem, reactions: optimisticReactions }
+        : messageItem
     ));
 
     try {
-      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${item.id}/reactions` : `/channels/${selected}/messages/${item.id}/reactions`;
+      let targetId = item.id;
+      if (String(item.id).startsWith("temp-")) {
+        const pending = pendingResolutions.current.get(item.id);
+        if (pending) {
+          const resolved = await pending.promise;
+          if (!resolved?.id) return;
+          targetId = resolved.id;
+        }
+      }
+
+      const endpoint = selectedPerson
+        ? `/direct/${selectedPerson.id}/messages/${targetId}/reactions`
+        : `/channels/${selected}/messages/${targetId}/reactions`;
       const result = await api(endpoint, {
         method: "POST",
         body: JSON.stringify({ emoji })
       });
-      setMessages((current) => current.map((messageItem) => messageItem.id === item.id ? {
-        ...messageItem,
-        reactions: result.reactions
-      } : messageItem));
+      setMessages((current) => current.map((messageItem) =>
+        (messageItem.id === targetId || messageItem.id === item.id)
+          ? { ...messageItem, reactions: result.reactions }
+          : messageItem
+      ));
     } catch (error) {
-      setMessages((current) => current.map((messageItem) => messageItem.id === item.id ? {
-        ...messageItem,
-        reactions: previousReactions
-      } : messageItem));
+      setMessages((current) => current.map((messageItem) =>
+        (messageItem.id === item.id || (item.clientTempId && messageItem.clientTempId === item.clientTempId))
+          ? { ...messageItem, reactions: previousReactions }
+          : messageItem
+      ));
       onToast(error.message);
     }
   }
@@ -501,19 +542,15 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   async function deleteMessage(item, scope) {
     setMessageMenuId(null);
     setReactionMessageId(null);
-    if (String(item.id).startsWith("temp-")) {
-      setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id));
-      return;
-    }
 
     const previousMessages = [...messages];
     const deletedAt = new Date().toISOString();
 
     if (scope === "me") {
-      setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id));
+      setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id && (!item.clientTempId || messageItem.clientTempId !== item.clientTempId)));
     } else {
       setMessages((current) => current.map((messageItem) => {
-        if (messageItem.id === item.id) {
+        if (messageItem.id === item.id || (item.clientTempId && messageItem.clientTempId === item.clientTempId)) {
           return {
             ...messageItem,
             body: "",
@@ -527,12 +564,24 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     }
 
     try {
-      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${item.id}` : `/channels/${selected}/messages/${item.id}`;
+      let targetId = item.id;
+      if (String(item.id).startsWith("temp-")) {
+        const pending = pendingResolutions.current.get(item.id);
+        if (pending) {
+          const resolved = await pending.promise;
+          if (!resolved?.id) return;
+          targetId = resolved.id;
+        }
+      }
+
+      const endpoint = selectedPerson
+        ? `/direct/${selectedPerson.id}/messages/${targetId}`
+        : `/channels/${selected}/messages/${targetId}`;
       const result = await api(`${endpoint}?scope=${scope}`, { method: "DELETE" });
       if (scope === "everyone" && result.deleted_at) {
         setMessages((current) => current.map((messageItem) => {
-          if (messageItem.id === item.id) return { ...messageItem, deleted_at: result.deleted_at };
-          return messageItem.reply_to_id === item.id ? { ...messageItem, reply_deleted_at: result.deleted_at } : messageItem;
+          if (messageItem.id === targetId || messageItem.id === item.id) return { ...messageItem, deleted_at: result.deleted_at };
+          return messageItem.reply_to_id === targetId ? { ...messageItem, reply_deleted_at: result.deleted_at } : messageItem;
         }));
       }
       onToast(scope === "me" ? "Message deleted for you" : "Message deleted for everyone");
