@@ -761,7 +761,8 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       body: z.string().trim().max(5000).default(""),
       attachmentId: z.string().uuid().nullable().optional(),
       replyTo: z.string().uuid().nullable().optional(),
-      forwardedFrom: z.string().uuid().nullable().optional()
+      forwardedFrom: z.string().uuid().nullable().optional(),
+      clientTempId: z.string().max(100).optional()
     }).refine((value) => value.body || value.attachmentId || value.forwardedFrom, { message: "Enter a message or attach a file" }).parse(req.body);
     const [membership] = await sql`SELECT 1 FROM channel_members WHERE channel_id = ${req.params.id} AND user_id = ${req.auth.userId}`;
     if (!membership) return res.status(403).json({ error: "You are not a member of this channel" });
@@ -811,7 +812,8 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       ...reply,
       channel_id: req.params.id,
       seen_by_all: !unreadMember,
-      reactions: []
+      reactions: [],
+      clientTempId: input.clientTempId || null
     };
     req.app.get("io")?.to(`channel:${req.params.id}`).emit("channel:message", result);
     const [channel] = await sql`SELECT name FROM channels WHERE id = ${req.params.id}`;
@@ -1011,7 +1013,8 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
     const input = z.object({
       body: z.string().trim().max(5000).default(""),
       attachmentId: z.string().uuid().nullable().optional(),
-      replyTo: z.string().uuid().nullable().optional()
+      replyTo: z.string().uuid().nullable().optional(),
+      clientTempId: z.string().max(100).optional()
     }).refine((value) => value.body || value.attachmentId, { message: "Enter a message or attach a file" }).parse(req.body);
     const [colleague] = await sql`SELECT id FROM users WHERE id = ${req.params.userId} AND organization_id = ${req.auth.organizationId}`;
     if (!colleague || colleague.id === req.auth.userId) return res.status(400).json({ error: "Select another employee" });
@@ -1041,8 +1044,10 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       FROM direct_messages original JOIN users author ON author.id = original.sender_id
       WHERE original.id = ${message.reply_to_id}
     ` : [null];
-    const result = { ...message, ...sender, ...attachment, ...reply, reactions: [] };
-    req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", { ...result, recipient_id: req.params.userId });
+    const result = { ...message, ...sender, ...attachment, ...reply, reactions: [], clientTempId: input.clientTempId || null };
+    for (const userId of [req.params.userId, req.auth.userId]) {
+      req.app.get("io")?.to(`user:${userId}`).emit("direct:message", { ...result, recipient_id: req.params.userId });
+    }
     sendPushToUser(req.params.userId, {
       title: sender.sender_name,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
