@@ -3,21 +3,21 @@ import { config } from "../config.js";
 
 const { Pool } = pg;
 
-function createSql() {
-  const pool = new Pool({
+const pool = new Pool({
     connectionString: config.databaseUrl,
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000
   });
 
-  pool.on("error", (error) => {
-    console.error("Unexpected PostgreSQL pool error", error);
-  });
+pool.on("error", (error) => {
+  console.error("Unexpected PostgreSQL pool error", error);
+});
 
+function createSql(queryable) {
   return async (strings, ...values) => {
     if (typeof strings === "string") {
-      const result = await pool.query(strings);
+      const result = await queryable.query(strings);
       return result.rows;
     }
 
@@ -27,9 +27,24 @@ function createSql() {
       ""
     );
 
-    const result = await pool.query(text, values);
+    const result = await queryable.query(text, values);
     return result.rows;
   };
 }
 
-export const sql = createSql();
+export const sql = createSql(pool);
+
+export async function withTransaction(callback) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await callback(createSql(client));
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}

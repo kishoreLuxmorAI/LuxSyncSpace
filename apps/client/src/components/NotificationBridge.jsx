@@ -31,9 +31,9 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     prepareDevice();
 
     const socket = io(SOCKET_URL, socketOptions());
-    const notify = (title, body, tag, sound = "message", view = "home") => {
-      callbacksRef.current.onNotification?.({ title, body, tag, sound, view, id: crypto.randomUUID() });
-      showWorkspaceNotification(title, body, tag, sound);
+    const notify = (title, body, tag, sound = "message", view = "home", channelId = null) => {
+      callbacksRef.current.onNotification?.({ title, body, tag, sound, view, channelId, id: crypto.randomUUID() });
+      showWorkspaceNotification(title, body, tag, sound, channelId);
     };
     socket.on("direct:message", (message) => {
       if (message.sender_id === user.id) return;
@@ -41,8 +41,11 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
       if (/^(Voice|Video) call:/.test(message.body || "")) return;
       if (/^Meeting cancelled:/.test(message.body || "")) return;
       const isMeetingInvitation = /^Meeting invitation:/.test(message.body || "");
+      const isMentioned = message.mentions?.some((mention) => mention.id === user.id);
       notify(
-        isMeetingInvitation ? `Meeting invitation from ${message.sender_name}` : `Message from ${message.sender_name}`,
+        isMeetingInvitation
+          ? `Meeting invitation from ${message.sender_name}`
+          : isMentioned ? `${message.sender_name} mentioned you` : `Message from ${message.sender_name}`,
         message.body || `Shared ${message.file_name || "a file"}`,
         `direct-${message.sender_id}`,
         isMeetingInvitation ? "meeting" : "message",
@@ -53,8 +56,40 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
       if (message.sender_id === user.id) return;
       callbacksRef.current.onChatMessage?.("channel", message.channel_id);
       const channel = channelsRef.current.find((item) => item.id === message.channel_id);
-      if (channel?.muted) return;
-      notify(`${message.sender_name} in #${channel?.name || "group"}`, message.body || `Shared ${message.file_name || "a file"}`, `channel-${message.channel_id}`, "message", "chat");
+      const isMentioned = message.mentions?.some((mention) => mention.id === user.id);
+      if (channel?.muted && !isMentioned) return;
+      if (isMentioned) {
+        notify(
+          `${message.sender_name} mentioned you in #${channel?.name || "group"}`,
+          message.body || `Shared ${message.file_name || "a file"}`,
+          `mention-${message.id}`,
+          "message",
+          "chat",
+          message.channel_id
+        );
+        return;
+      }
+      notify(
+        `${message.sender_name} in #${channel?.name || "group"}`,
+        message.body || `Shared ${message.file_name || "a file"}`,
+        `channel-${message.channel_id}`,
+        "message",
+        "chat",
+        message.channel_id
+      );
+    });
+    socket.on("channel:mention", (message) => {
+      if (message.sender_id === user.id) return;
+      callbacksRef.current.onChatMessage?.("channel", message.channel_id);
+      const channel = channelsRef.current.find((item) => item.id === message.channel_id);
+      notify(
+        `${message.sender_name} mentioned you in #${channel?.name || message.channel_name || "group"}`,
+        message.body || `Shared ${message.file_name || "a file"}`,
+        `mention-${message.id}`,
+        "message",
+        "chat",
+        message.channel_id
+      );
     });
     socket.on("announcement:new", (announcement) => {
       notify(`Company announcement: ${announcement.title}`, announcement.body, `announcement-${announcement.id}`);

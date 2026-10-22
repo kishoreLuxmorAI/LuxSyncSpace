@@ -148,7 +148,7 @@ export default function App() {
   function openNotification(item) {
     setNotification(null);
     setNotifications((current) => current.map((entry) => entry.id === item.id ? { ...entry, unread: false } : entry));
-    navigate(item.view || "home");
+    navigate(item.view || "home", item.channelId ? { channel: item.channelId } : {});
   }
 
   useEffect(() => {
