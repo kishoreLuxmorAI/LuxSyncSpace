@@ -179,9 +179,9 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     setBusy(true);
     try {
       const result = await api("/invitations", { method: "POST", body: JSON.stringify(invite) });
-      await onRefresh();
       setInvite(emptyInvite());
       onToast(result.message || "Employee invitation email sent");
+      onRefresh().catch((error) => onToast(`Invitation sent, but the employee list could not be refreshed: ${error.message}`));
     } catch (error) { onToast(error.message); }
     finally { setBusy(false); }
   }
