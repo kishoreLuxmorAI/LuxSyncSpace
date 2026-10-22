@@ -95,12 +95,39 @@ io.on("connection", (socket) => {
   });
   socket.on("channel:leave", (channelId) => socket.leave(`channel:${channelId}`));
 
+  socket.on("meeting:presence", async ({ roomId }, acknowledge = () => {}) => {
+    try {
+      const [meeting] = await sql`
+        SELECT id FROM events
+        WHERE id = ${roomId}
+          AND organization_id = ${socket.auth.organizationId}
+          AND is_online = TRUE
+          AND cancelled_at IS NULL
+          AND ended_at IS NULL
+      `;
+      if (!meeting) return acknowledge({ ok: false, error: "Meeting not found or access denied" });
+
+      const participants = await io.in(`meeting:${meeting.id}`).fetchSockets();
+      acknowledge({
+        ok: true,
+        participants: participants
+          .filter((participant) => participant.data.meetingProfile)
+          .map((participant) => participant.data.meetingProfile)
+      });
+    } catch (error) {
+      console.error("Meeting presence lookup failed", error);
+      acknowledge({ ok: false, error: "Could not check meeting participants" });
+    }
+  });
+
   socket.on("meeting:join", async ({ roomId }, acknowledge = () => {}) => {
     try {
       const [joinData] = await sql`
         SELECT
           event.id AS meeting_id,
           event.title AS meeting_title,
+          event.organizer_id,
+          event.organizer_id,
           event.starts_at,
           event.ends_at,
           profile.id AS profile_id,
@@ -123,6 +150,7 @@ io.on("connection", (socket) => {
       const meeting = {
         id: joinData.meeting_id,
         title: joinData.meeting_title,
+        organizer_id: joinData.organizer_id,
         starts_at: joinData.starts_at,
         ends_at: joinData.ends_at
       };
@@ -139,6 +167,11 @@ io.on("connection", (socket) => {
       }
       const room = `meeting:${meeting.id}`;
       const existingSockets = await io.in(room).fetchSockets();
+      const attendeeRows = await sql`
+        SELECT user_id FROM event_attendees
+        WHERE event_id = ${meeting.id} AND user_id <> ${meeting.organizer_id}
+      `;
+      const attendeeIds = new Set(attendeeRows.map((attendee) => attendee.user_id));
       socket.meetingRoom = room;
       socket.data.meetingProfile = profile;
       socket.join(room);
@@ -151,6 +184,21 @@ io.on("connection", (socket) => {
         })).filter((participant) => participant.user)
       });
       socket.to(room).emit("meeting:user-joined", { socketId: socket.id, user: profile });
+      const roomSockets = await io.in(room).fetchSockets();
+      const roomProfiles = roomSockets
+        .map((participant) => participant.data.meetingProfile)
+        .filter(Boolean);
+      const organizerPresent = roomProfiles.some((participant) => participant.id === meeting.organizer_id);
+      const inviteePresent = roomProfiles.some((participant) => attendeeIds.has(participant.id));
+      if (organizerPresent && inviteePresent) {
+        const notifiedUserIds = new Set([meeting.organizer_id, ...attendeeIds]);
+        for (const userId of notifiedUserIds) {
+          io.to(`user:${userId}`).emit("call:answered", {
+            meetingId: meeting.id,
+            participant: profile
+          });
+        }
+      }
     } catch (error) {
       console.error("Meeting join failed", error);
       acknowledge({ ok: false, error: "Could not join this meeting" });

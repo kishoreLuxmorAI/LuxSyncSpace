@@ -1,16 +1,16 @@
 import { useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { SOCKET_URL, socketOptions } from "../lib/api";
-import { primeNotificationAudio, refreshNotificationSubscription, showIncomingCallNotification, showWorkspaceNotification } from "../lib/notifications";
+import { dismissIncomingCallNotification, primeNotificationAudio, refreshNotificationSubscription, showIncomingCallNotification, showWorkspaceNotification, stopIncomingCallRingtone } from "../lib/notifications";
 
-export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onNotification, onChatMessage, onPresenceUpdate }) {
+export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate }) {
   const channelsRef = useRef(channels);
-  const callbacksRef = useRef({ onRefresh, onIncomingCall, onNotification, onChatMessage, onPresenceUpdate });
+  const callbacksRef = useRef({ onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate });
 
   useEffect(() => {
     channelsRef.current = channels;
-    callbacksRef.current = { onRefresh, onIncomingCall, onNotification, onChatMessage, onPresenceUpdate };
-  }, [channels, onRefresh, onIncomingCall, onNotification, onChatMessage, onPresenceUpdate]);
+    callbacksRef.current = { onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate };
+  }, [channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate]);
 
   useEffect(() => {
     let lastSubscriptionRefresh = 0;
@@ -87,6 +87,11 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     socket.on("call:incoming", (call) => {
       callbacksRef.current.onIncomingCall(call);
       showIncomingCallNotification(call).catch(() => {});
+    });
+    socket.on("call:answered", ({ meetingId, participant }) => {
+      stopIncomingCallRingtone();
+      callbacksRef.current.onCallAnswered?.({ meetingId, participant });
+      dismissIncomingCallNotification(meetingId).catch(() => {});
     });
     return () => {
       window.removeEventListener("pointerdown", prepareDevice);
