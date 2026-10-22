@@ -14,16 +14,6 @@ const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
 
-function isOutside(ref, event) {
-  if (!ref?.current) return false;
-  if (ref.current === event.target || ref.current.contains(event.target)) return false;
-  if (typeof event.composedPath === "function") {
-    const path = event.composedPath();
-    if (path && path.includes(ref.current)) return false;
-  }
-  return true;
-}
-
 export function Chat({ user, channels, people, directUnreadCounts = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
@@ -51,12 +41,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const textareaRef = useRef();
   const fileInputRef = useRef();
   const emojiPickerRef = useRef(null);
-  const emojiBtnRef = useRef(null);
   const reactionPickerRef = useRef(null);
   const messageMenuRef = useRef(null);
-  const moreMenuRef = useRef(null);
-  const moreBtnRef = useRef(null);
-  const mentionSuggestionsRef = useRef(null);
   const socketRef = useRef();
   const selectedPersonRef = useRef(null);
   const selectedChannelRef = useRef(null);
@@ -116,53 +102,33 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   useEffect(() => {
     function handleClickOutside(event) {
       if (
-        emojiOpen &&
-        isOutside(emojiPickerRef, event) &&
-        isOutside(emojiBtnRef, event)
+        emojiPickerRef.current &&
+        !emojiPickerRef.current.contains(event.target)
       ) {
         setEmojiOpen(false);
       }
 
       if (
-        messageMenuId &&
-        isOutside(messageMenuRef, event) &&
-        !event.target.closest?.(".message-more")
+        messageMenuRef.current &&
+        !messageMenuRef.current.contains(target)
       ) {
         setMessageMenuId(null);
       }
 
       if (
-        reactionMessageId &&
-        isOutside(reactionPickerRef, event)
+        reactionPickerRef.current &&
+        !reactionPickerRef.current.contains(event.target)
       ) {
         setReactionMessageId(null);
-      }
-
-      if (
-        moreOpen &&
-        isOutside(moreMenuRef, event) &&
-        isOutside(moreBtnRef, event)
-      ) {
-        setMoreOpen(false);
-      }
-
-      if (
-        mentionRange &&
-        isOutside(mentionSuggestionsRef, event) &&
-        isOutside(textareaRef, event)
-      ) {
-        setMentionRange(null);
       }
     }
 
     document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("touchstart", handleClickOutside, { passive: true });
 
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("touchstart", handleClickOutside);
     };
-  }, [emojiOpen, messageMenuId, reactionMessageId, moreOpen, mentionRange]);
+  }, []);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -694,26 +660,13 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
             {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
-            {mentionRange && <div ref={mentionSuggestionsRef} className="mention-suggestions" role="listbox" aria-label="Employees">
-              {mentionSuggestions.length ? mentionSuggestions.map((person, index) => <button
-                type="button"
-                role="option"
-                aria-selected={index === activeMentionIndex}
-                className={index === activeMentionIndex ? "active" : ""}
-                key={person.id}
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseEnter={() => setActiveMentionIndex(index)}
-                onClick={() => selectMention(person)}
-              >
-                <Avatar person={person} size="xs" />
-                <span><b>{person.full_name}</b><small>{person.title} · {person.department}</small></span>
-              </button>) : <p>No active employees match “{mentionRange.query}”.</p>}
-            </div>}
-            <textarea ref={textareaRef} value={message} onChange={changeMessage} onPaste={pasteImage} onKeyDown={handleComposerKeyDown} placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`} rows={1} />
+            <textarea ref={textareaRef} value={message} onChange={(event) => setMessage(event.target.value)} onPaste={pasteImage} onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
+            }} placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`} rows={1} />
             <input ref={fileInputRef} className="composer-file-input" type="file" accept={ACCEPTED_FILES} onChange={chooseFile} />
             <div className="composer-toolbar"><span>
               <button type="button" className={uploading ? "tool-busy" : ""} onClick={() => fileInputRef.current?.click()} disabled={uploading} title="Attach a file"><Paperclip size={18} /></button>
-              <button ref={emojiBtnRef} type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
+              <button type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
             </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
             {emojiOpen &&
               <div
@@ -735,8 +688,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
         <div className="detail-actions">
           <button className={channelMuted ? "active" : ""} onClick={toggleMute}><Bell size={18} /><span>{channelMuted ? "Unmute" : "Mute"}</span></button>
           <button className={messageSearchOpen ? "active" : ""} onClick={() => setMessageSearchOpen((open) => !open)}><Search size={18} /><span>Search</span></button>
-          <div className="channel-more-wrap"><button ref={moreBtnRef} className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
-            {moreOpen && <div ref={moreMenuRef} className="channel-more-menu">
+          <div className="channel-more-wrap"><button className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
+            {moreOpen && <div className="channel-more-menu">
               {canCreateGroup && <button onClick={() => { setManageMembers(true); setMoreOpen(false); }}><UserPlus size={16} /> Manage members</button>}
               <button onClick={copyChannelLink}><Hash size={16} /> Copy channel link</button>
               <button onClick={exportConversation}><Download size={16} /> Export conversation</button>
