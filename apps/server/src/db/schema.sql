@@ -167,6 +167,7 @@ ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS forwarded_from_id UUID REF
 ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS deleted_by UUID REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS mentioned_user_ids UUID[] NOT NULL DEFAULT '{}'::uuid[];
 
 CREATE TABLE IF NOT EXISTS channel_message_hidden (
   message_id UUID NOT NULL REFERENCES channel_messages(id) ON DELETE CASCADE,
@@ -198,6 +199,7 @@ ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS reply_to_id UUID REFERENCES
 ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS deleted_by UUID REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS mentioned_user_ids UUID[] NOT NULL DEFAULT '{}'::uuid[];
 
 CREATE TABLE IF NOT EXISTS direct_message_hidden (
   message_id UUID NOT NULL REFERENCES direct_messages(id) ON DELETE CASCADE,
