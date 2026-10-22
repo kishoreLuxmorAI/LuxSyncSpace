@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { SOCKET_URL, socketOptions } from "../lib/api";
 import { primeNotificationAudio, refreshNotificationSubscription, showIncomingCallNotification, showWorkspaceNotification } from "../lib/notifications";
+import { getChannelMentionNotification, isDirectMessageMention } from "../lib/mentions";
 
 export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onNotification, onChatMessage, onPresenceUpdate }) {
   const channelsRef = useRef(channels);
@@ -41,20 +42,25 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
       if (/^(Voice|Video) call:/.test(message.body || "")) return;
       if (/^Meeting cancelled:/.test(message.body || "")) return;
       const isMeetingInvitation = /^Meeting invitation:/.test(message.body || "");
+      const isMention = isDirectMessageMention(message, user.id);
       notify(
-        isMeetingInvitation ? `Meeting invitation from ${message.sender_name}` : `Message from ${message.sender_name}`,
+        isMeetingInvitation ? `Meeting invitation from ${message.sender_name}` : isMention ? `${message.sender_name} mentioned you` : `Message from ${message.sender_name}`,
         message.body || `Shared ${message.file_name || "a file"}`,
         `direct-${message.sender_id}`,
         isMeetingInvitation ? "meeting" : "message",
         "chat"
       );
     });
+    socket.on("direct:message-edited", (message) => {
+      if (!isDirectMessageMention(message, user.id)) return;
+      notify(`${message.sender_name} mentioned you`, message.body, `direct-${message.sender_id}`, "message", "chat");
+    });
     socket.on("channel:message", (message) => {
       if (message.sender_id === user.id) return;
       callbacksRef.current.onChatMessage?.("channel", message.channel_id);
       const channel = channelsRef.current.find((item) => item.id === message.channel_id);
-      if (channel?.muted) return;
-      notify(`${message.sender_name} in #${channel?.name || "group"}`, message.body || `Shared ${message.file_name || "a file"}`, `channel-${message.channel_id}`, "message", "chat");
+      const notification = getChannelMentionNotification(message, user.id, channel);
+      if (notification) notify(notification.title, notification.body, notification.tag, notification.sound, notification.view);
     });
     socket.on("announcement:new", (announcement) => {
       notify(`Company announcement: ${announcement.title}`, announcement.body, `announcement-${announcement.id}`);

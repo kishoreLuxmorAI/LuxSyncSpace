@@ -7,6 +7,7 @@ LuxSyncspace is Luxmor AI's internal communication workspace for real-time compa
 - Organization-based secure sign-in with JWT sessions and bcrypt password hashing
 - Unified home dashboard with team channels, schedule, and availability
 - Team channels with real-time Socket.IO messaging
+- Channel @mentions with member suggestions, highlighted messages, and targeted notifications
 - Private one-to-one employee messaging
 - Invite-link onboarding with automatic employee IDs and company access
 - Detailed employee profiles with designation, department, manager, contact details, and joining date
