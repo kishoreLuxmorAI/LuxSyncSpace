@@ -1,4 +1,4 @@
-const CACHE_NAME = "luxsyncspace-v4";
+const CACHE_NAME = "luxsyncspace-v5";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -24,6 +24,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/socket.io/")) return;
+  if (url.pathname.startsWith("/src/") || url.pathname.startsWith("/@") || url.pathname.startsWith("/node_modules/")) return;
   if (event.request.mode === "navigate") {
     event.respondWith(
       fetch(event.request)
