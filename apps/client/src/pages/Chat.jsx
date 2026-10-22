@@ -29,6 +29,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [createGroup, setCreateGroup] = useState(false);
   const [manageMembers, setManageMembers] = useState(false);
+  const [membersExpanded, setMembersExpanded] = useState(false);
   const [channelMembers, setChannelMembers] = useState([]);
   const [channelMuted, setChannelMutedState] = useState(() => channels.find((channel) => channel.id === initialChannelId)?.muted || false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
@@ -98,6 +99,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
 
   useEffect(() => {
     setChannelMutedState(channels.find((channel) => channel.id === selected)?.muted || false);
+    setMembersExpanded(false);
     setMessageSearch("");
     setMessageSearchOpen(false);
     setMoreOpen(false);
@@ -719,7 +721,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             <div><button className="mobile-conversation-back" onClick={() => closeConversation()} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p></span></div>
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
-              {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
+              {selected && <button className="members-button" onClick={() => setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
               {selected && canCreateGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
               {!selectedPerson && <>
                 <button className="icon-button"><Bell size={19} /></button>
@@ -834,12 +836,19 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             </div>}
           </div>
         </div>
-        <button className="details-row" onClick={() => canCreateGroup && setManageMembers(true)}><span><Users size={18} /> Members</span><b>{channelMembers.length}</b><ChevronDown size={16} /></button>
-        <div className="details-members">{channelMembers.slice(0, 6).map((person) => <div key={person.id}><Avatar person={person} size="xs" showPresence /><span><b>{person.full_name}</b><small>{person.title}</small></span></div>)}</div>
+        <button
+          className={`details-row ${membersExpanded ? "expanded" : ""}`}
+          onClick={() => setMembersExpanded((expanded) => !expanded)}
+          aria-expanded={membersExpanded}
+          aria-controls="channel-members-list"
+        ><span><Users size={18} /> Members</span><b>{channelMembers.length}</b><ChevronDown size={16} /></button>
+        {membersExpanded && <div className="details-members" id="channel-members-list" aria-label="Group members">
+          {channelMembers.map((person) => <div key={person.id}><Avatar person={person} size="xs" showPresence /><span><b>{person.full_name}</b><small>{person.title}</small></span></div>)}
+        </div>}
         {canCreateGroup && <button className="button button-secondary manage-members-button" onClick={() => setManageMembers(true)}><UserPlus size={16} /> Manage members</button>}
       </aside>}
       {createGroup && <CreateGroup people={people.filter((person) => person.id !== user.id)} onCreate={submitGroup} onClose={() => setCreateGroup(false)} />}
-      {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
+      {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} canManage={canCreateGroup} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
       {forwardingMessage && <ForwardMessageModal message={forwardingMessage} channels={channels} people={people.filter((person) => person.id !== user.id)} onForward={forwardMessage} onClose={() => setForwardingMessage(null)} />}
       {deleteGroupOpen && activeChannel && <Modal title="Delete group" subtitle={`Permanently remove #${activeChannel.name}`} onClose={() => setDeleteGroupOpen(false)}>
         <div className="delete-confirm"><span><Trash2 size={24} /></span><h3>Delete #{activeChannel.name}?</h3><p>All messages, attachments, and membership records in this group will be permanently deleted. This cannot be recovered.</p><footer><button className="button button-secondary" onClick={() => setDeleteGroupOpen(false)}>Cancel</button><button className="button button-danger" onClick={deleteGroup}><Trash2 size={16} /> Delete group</button></footer></div>
