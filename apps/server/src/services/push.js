@@ -41,14 +41,12 @@ export async function sendPushToUser(userId, payload) {
   return deliver(rows, payload);
 }
 
-export async function sendPushToChannel(channelId, excludeUserId, payload, excludeUserIds = []) {
+export async function sendPushToChannel(channelId, excludeUserId, payload) {
   const rows = await sql`
     SELECT DISTINCT ps.endpoint, ps.p256dh, ps.auth
     FROM push_subscriptions ps
     JOIN channel_members cm ON cm.user_id = ps.user_id
-    WHERE cm.channel_id = ${channelId} AND cm.muted = FALSE
-      AND ps.user_id <> ${excludeUserId}
-      AND NOT (ps.user_id = ANY(${excludeUserIds}::uuid[]))
+    WHERE cm.channel_id = ${channelId} AND cm.muted = FALSE AND ps.user_id <> ${excludeUserId}
   `;
   return deliver(rows, payload);
 }
