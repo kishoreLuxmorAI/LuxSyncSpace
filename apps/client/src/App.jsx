@@ -29,6 +29,7 @@ export default function App() {
   });
   const [meetingId, setMeetingId] = useState(() => new URLSearchParams(window.location.search).get("meeting"));
   const [activeMeeting, setActiveMeeting] = useState(null);
+  const [skipMeetingLobby, setSkipMeetingLobby] = useState(() => new URLSearchParams(window.location.search).get("join") === "1");
   const [loading, setLoading] = useState(Boolean(authStore.get()));
   const [sessionError, setSessionError] = useState("");
   const [newEvent, setNewEvent] = useState(false);
@@ -110,6 +111,7 @@ export default function App() {
       const params = new URLSearchParams(window.location.search);
       const nextMeeting = params.get("meeting");
       setMeetingId(nextMeeting);
+      setSkipMeetingLobby(params.get("join") === "1");
       if (!nextMeeting) {
         setActiveMeeting(null);
         setActive(params.get("channel") || params.get("direct") ? "chat" : params.get("view") || "home");
@@ -165,7 +167,7 @@ export default function App() {
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const handleCallAction = (event) => {
-      if (event.data?.type !== "luxsyncspace:call-rejected") return;
+      if (!["luxsyncspace:call-rejected", "luxsyncspace:call-accepted"].includes(event.data?.type)) return;
       setIncomingCall((current) => current?.meeting?.id === event.data.meetingId ? null : current);
     };
     navigator.serviceWorker.addEventListener("message", handleCallAction);
@@ -299,23 +301,28 @@ export default function App() {
     setTutorialOpen(false);
   }
 
-  function joinMeeting(event) {
+  function joinMeeting(event, { skipLobby = false } = {}) {
     const url = new URL(window.location.href);
     url.searchParams.delete("channel");
     url.searchParams.set("meeting", event.id);
+    if (skipLobby) url.searchParams.set("join", "1");
+    else url.searchParams.delete("join");
     window.history.pushState({ luxsyncspace: true, view: active, meetingId: event.id }, "", url);
     setActiveMeeting(event);
     setMeetingId(event.id);
+    setSkipMeetingLobby(skipLobby);
   }
 
   function leaveMeeting() {
     const url = new URL(window.location.href);
     url.searchParams.delete("meeting");
+    url.searchParams.delete("join");
     url.searchParams.set("view", "meetings");
     window.history.replaceState({ luxsyncspace: true, view: "meetings" }, "", url);
     setActive("meetings");
     setMeetingId(null);
     setActiveMeeting(null);
+    setSkipMeetingLobby(false);
     refreshWorkspace().catch(() => { });
   }
 
@@ -336,7 +343,7 @@ export default function App() {
           isCall: Boolean(options.isCall)
         })
       });
-      joinMeeting(meeting);
+      joinMeeting(meeting, { skipLobby: Boolean(options.skipLobby) });
       refreshWorkspace().catch((error) => console.error("Could not refresh workspace after starting meeting", error));
     } catch (error) { setToast(error.message); }
   }
@@ -346,7 +353,8 @@ export default function App() {
       title: `${user.full_name} and ${person.full_name}`,
       attendeeIds: [person.id],
       mode,
-      isCall: true
+      isCall: true,
+      skipLobby: true
     });
   }
 
@@ -361,7 +369,11 @@ export default function App() {
     if (!call) return;
     setIncomingCall(null);
     dismissIncomingCallNotification(call.meeting?.id).catch(() => { });
-    joinMeeting(call.meeting);
+    joinMeeting(call.meeting, { skipLobby: true });
+  }
+
+  function handleCallAnswered({ meetingId }) {
+    setIncomingCall((current) => current?.meeting?.id === meetingId ? null : current);
   }
 
   if (loading) return <div className="app-loading"><span className="loading-logo">S</span><p>Opening your workspace…</p></div>;
@@ -371,8 +383,8 @@ export default function App() {
   if (meetingId) {
     const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
     return <>
-      <MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onEndMeeting={endMeetingForEveryone} onToast={setToast} />
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
+      <MeetingRoom meeting={meeting} user={user} people={data.people} onInvite={(attendeeIds) => addMeetingAttendees(meeting, attendeeIds)} onLeave={leaveMeeting} onEndMeeting={endMeetingForEveryone} onToast={setToast} skipLobby={skipMeetingLobby} />
+      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onCallAnswered={handleCallAnswered} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
       <InAppNotification notification={notification} onOpen={() => setNotification(null)} onClose={() => setNotification(null)} />
       <Toast message={toast} onClose={() => setToast("")} />
     </>;
@@ -391,7 +403,7 @@ export default function App() {
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "help"].includes(active) && <Home {...pageProps} />}
       </Shell>
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
+      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onCallAnswered={handleCallAnswered} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
       <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onOpen={() => openNotification(notification)} onClose={() => setNotification(null)} />
       {!tutorialOpen && <NotificationSetupPrompt onToast={setToast} />}

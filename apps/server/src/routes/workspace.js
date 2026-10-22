@@ -1254,18 +1254,24 @@ workspaceRouter.post("/events/:eventId/attendees", async (req, res, next) => {
     ` : [];
     const existingIds = new Set(existing.map((attendee) => attendee.user_id));
     const newAttendeeIds = requestedIds.filter((id) => !existingIds.has(id));
-    if (!newAttendeeIds.length) return res.json({ added: 0, message: "Everyone selected is already invited" });
 
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${eventId}, attendee_id, 'accepted'
-      FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
+    if (newAttendeeIds.length) {
+      await sql`
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT ${eventId}, attendee_id, 'accepted'
+        FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
+        ON CONFLICT DO NOTHING
+      `;
+    }
     const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds: newAttendeeIds, organizer });
-    invalidateCache(`events:${req.auth.organizationId}`);
-    res.json({ added: newAttendeeIds.length, message: `${newAttendeeIds.length} ${newAttendeeIds.length === 1 ? "person" : "people"} added and invited` });
+    await shareMeetingInvitation({ req, event, recipientIds: requestedIds, organizer });
+    if (newAttendeeIds.length) invalidateCache(`events:${req.auth.organizationId}`);
+    res.json({
+      added: newAttendeeIds.length,
+      message: newAttendeeIds.length
+        ? `${newAttendeeIds.length} ${newAttendeeIds.length === 1 ? "person" : "people"} added and invited`
+        : `${requestedIds.length} ${requestedIds.length === 1 ? "invitation" : "invitations"} sent again`
+    });
   } catch (error) { next(error); }
 });
 

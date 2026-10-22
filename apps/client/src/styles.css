@@ -678,6 +678,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .notification-setup-prompt { position: fixed; z-index: 440; right: 20px; bottom: 20px; width: min(480px, calc(100vw - 28px)); padding: 13px; border: 1px solid #cfdbf3; border-radius: 14px; color: #17263e; background: white; box-shadow: 0 18px 48px rgba(16,31,55,.24); display: grid; grid-template-columns: 40px minmax(0, 1fr) auto 28px; gap: 10px; align-items: center; }
 .notification-setup-prompt > span { width: 40px; height: 40px; border-radius: 11px; color: white; background: var(--blue); display: grid; place-items: center; }
 .notification-setup-prompt > div { min-width: 0; }.notification-setup-prompt b { font-size: 11px; }.notification-setup-prompt p { margin: 3px 0 0; color: #69768a; font-size: 9px; line-height: 1.4; }
+.notification-setup-prompt .notification-setup-error { color: #b42332; }
 .notification-setup-prompt .button { min-width: 92px; padding: 9px 11px; font-size: 9px; }
 .notification-setup-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; color: #778499; background: transparent; display: grid; place-items: center; }
 .app-loading { min-height: 100vh; background: #111e37; color: #b7c4d9; display: grid; place-content: center; justify-items: center; gap: 12px; font-size: 12px; }
