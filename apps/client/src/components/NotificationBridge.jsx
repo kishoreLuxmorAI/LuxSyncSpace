@@ -78,11 +78,8 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     socket.on("employee:status-updated", () => {
       callbacksRef.current.onRefresh?.();
     });
-    socket.on("profile:privacy-updated", () => {
-      callbacksRef.current.onRefresh?.();
-    });
-    socket.on("profile:privacy-updated", () => {
-      callbacksRef.current.onRefresh?.();
+    socket.on("profile:privacy-updated", (updatedUser) => {
+      if (updatedUser?.id !== user.id) callbacksRef.current.onRefresh?.();
     });
     socket.on("call:incoming", (call) => {
       callbacksRef.current.onIncomingCall(call);
