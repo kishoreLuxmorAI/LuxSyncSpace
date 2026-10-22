@@ -147,14 +147,15 @@ function urlBase64ToUint8Array(value) {
   return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
 }
 
-export async function showWorkspaceNotification(title, body, tag = "luxsyncspace", sound = "message") {
+export async function showWorkspaceNotification(title, body, tag = "luxsyncspace", sound = "message", channelId = null) {
   await playNotificationSound(sound).catch(() => {});
   if (!notificationsEnabled()) return;
   if (document.visibilityState === "visible") return;
   const registration = await getNotificationRegistration();
   
   let targetUrl = "/";
-  if (tag && tag.startsWith("channel-")) targetUrl = `/?view=chat&channel=${tag.replace("channel-", "")}`;
+  if (channelId) targetUrl = `/?view=chat&channel=${channelId}`;
+  else if (tag && tag.startsWith("channel-")) targetUrl = `/?view=chat&channel=${tag.replace("channel-", "")}`;
   if (tag && tag.startsWith("direct-")) targetUrl = `/?view=chat&direct=${tag.replace("direct-", "")}`;
 
   await registration.showNotification(title, {

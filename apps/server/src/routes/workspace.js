@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { z } from "zod";
-import { sql } from "../db/client.js";
+import { sql, withTransaction } from "../db/client.js";
 import { requireAuth } from "../middleware/auth.js";
 import { sendEmployeeInvitation, sendPasswordResetCompleted, sendSupportRequest } from "../services/email.js";
 import { config } from "../config.js";
@@ -298,6 +298,40 @@ async function markChannelRead(req, channelId) {
 async function currentRole(userId) {
   const [user] = await sql`SELECT role FROM users WHERE id = ${userId}`;
   return user?.role;
+}
+
+async function resolveChannelMentions(channelId, organizationId, userIds, body) {
+  if (!userIds.length) return [];
+  const users = await sql`
+    SELECT u.id,
+           CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member')
+                ELSE u.full_name END AS name
+    FROM users u
+    JOIN channels channel ON channel.id = ${channelId}
+      AND channel.organization_id = ${organizationId}
+    WHERE u.organization_id = ${organizationId}
+      AND u.employment_status = 'active'
+      AND u.deleted_at IS NULL
+      AND u.id = ANY(${userIds}::uuid[])
+  `;
+  if (users.length !== userIds.length || users.some((user) => !body.includes(`@${user.name}`))) return null;
+  return users;
+}
+
+async function resolveDirectMentions(organizationId, userIds, body) {
+  if (!userIds.length) return [];
+  const users = await sql`
+    SELECT id,
+           CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member')
+                ELSE full_name END AS name
+    FROM users
+    WHERE organization_id = ${organizationId}
+      AND employment_status = 'active'
+      AND deleted_at IS NULL
+      AND id = ANY(${userIds}::uuid[])
+  `;
+  if (users.length !== userIds.length || users.some((user) => !body.includes(`@${user.name}`))) return null;
+  return users;
 }
 
 function notifyMeetingInvitees({ req, event, messages, organizer, isCall = false }) {
@@ -704,7 +738,7 @@ workspaceRouter.get("/channels/:id/messages", async (req, res, next) => {
     const receipt = await markChannelRead(req, req.params.id);
     if (!receipt) return res.status(403).json({ error: "You are not a member of this channel" });
     const messages = await sql`
-      SELECT cm.id, cm.body, cm.sent_at, u.id AS sender_id,
+      SELECT cm.id, cm.body, cm.sent_at, cm.mentions, u.id AS sender_id,
              CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS sender_name,
              u.initials, u.avatar_color, u.title, a.id AS attachment_id, a.file_name,
              a.mime_type, a.file_size, cm.deleted_at, cm.reply_to_id, cm.forwarded_from_id,
@@ -761,12 +795,16 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       body: z.string().trim().max(5000).default(""),
       attachmentId: z.string().uuid().nullable().optional(),
       replyTo: z.string().uuid().nullable().optional(),
-      forwardedFrom: z.string().uuid().nullable().optional()
+      forwardedFrom: z.string().uuid().nullable().optional(),
+      mentionUserIds: z.array(z.string().uuid()).max(500).default([])
     }).refine((value) => value.body || value.attachmentId || value.forwardedFrom, { message: "Enter a message or attach a file" }).parse(req.body);
     const [membership] = await sql`SELECT 1 FROM channel_members WHERE channel_id = ${req.params.id} AND user_id = ${req.auth.userId}`;
     if (!membership) return res.status(403).json({ error: "You are not a member of this channel" });
+    const mentionUserIds = [...new Set(input.mentionUserIds)];
+    const mentions = await resolveChannelMentions(req.params.id, req.auth.organizationId, mentionUserIds, input.body);
+    if (!mentions) return res.status(400).json({ error: "One or more mentions are not available in this channel" });
     const [message] = await sql`
-      INSERT INTO channel_messages (channel_id, sender_id, body, attachment_id, reply_to_id, forwarded_from_id)
+      INSERT INTO channel_messages (channel_id, sender_id, body, attachment_id, reply_to_id, forwarded_from_id, mentions)
       SELECT ${req.params.id}, ${req.auth.userId}, ${input.body},
         COALESCE(a.id, (
           SELECT forwarded.attachment_id FROM channel_messages forwarded
@@ -778,7 +816,8 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
          WHERE reply.id = ${input.replyTo || null} AND reply.channel_id = ${req.params.id} AND reply.deleted_at IS NULL),
         (SELECT forwarded.id FROM channel_messages forwarded
          JOIN channel_members access ON access.channel_id = forwarded.channel_id AND access.user_id = ${req.auth.userId}
-         WHERE forwarded.id = ${input.forwardedFrom || null} AND forwarded.deleted_at IS NULL)
+         WHERE forwarded.id = ${input.forwardedFrom || null} AND forwarded.deleted_at IS NULL),
+        ${JSON.stringify(mentions)}::jsonb
       FROM (SELECT 1) seed
       LEFT JOIN message_attachments a ON a.id = ${input.attachmentId || null}
         AND a.organization_id = ${req.auth.organizationId} AND a.uploader_id = ${req.auth.userId}
@@ -786,6 +825,25 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       RETURNING id, body, sent_at, attachment_id, reply_to_id, forwarded_from_id
     `;
     if (!message) return res.status(400).json({ error: "The selected attachment is not available" });
+    const addedMembers = mentions.length ? await sql`
+      INSERT INTO channel_members (channel_id, user_id)
+      SELECT channel.id, mentioned.id
+      FROM channels channel
+      JOIN users mentioned ON mentioned.id = ANY(${mentions.map((mention) => mention.id)}::uuid[])
+      WHERE channel.id = ${req.params.id}
+        AND channel.organization_id = ${req.auth.organizationId}
+      ON CONFLICT DO NOTHING
+      RETURNING user_id
+    ` : [];
+    const io = req.app.get("io");
+    for (const member of addedMembers) {
+      io?.in(`user:${member.user_id}`).socketsJoin(`channel:${req.params.id}`);
+      io?.to(`user:${member.user_id}`).emit("channel:membership-updated", {
+        channel_id: req.params.id,
+        action: "added"
+      });
+    }
+    if (addedMembers.length) invalidateCache("channel-memberships:", "socket-memberships:");
     const [attachment] = message.attachment_id ? await sql`
       SELECT file_name, mime_type, file_size FROM message_attachments WHERE id = ${message.attachment_id}
     ` : [null];
@@ -809,6 +867,7 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       ...sender,
       ...attachment,
       ...reply,
+      mentions,
       channel_id: req.params.id,
       seen_by_all: !unreadMember,
       reactions: []
@@ -820,7 +879,16 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `channel-${req.params.id}`,
       url: "/"
-    }).catch(console.error);
+    }, mentions.map((mention) => mention.id)).catch(console.error);
+    for (const mention of mentions) {
+      sendPushToUser(mention.id, {
+        type: "mention",
+        title: `${sender.sender_name} mentioned you in #${channel?.name || "group"}`,
+        body: input.body.slice(0, 180),
+        tag: `mention-${message.id}`,
+        url: `/?view=chat&channel=${req.params.id}`
+      }).catch(console.error);
+    }
     res.status(201).json(result);
   } catch (error) { next(error); }
 });
@@ -870,10 +938,33 @@ workspaceRouter.delete("/channels/:channelId/messages/:messageId", async (req, r
 
 workspaceRouter.patch("/channels/:channelId/messages/:messageId", async (req, res, next) => {
   try {
-    const { body } = z.object({ body: z.string().trim().min(1).max(5000) }).parse(req.body);
+    const { body, mentionUserIds } = z.object({
+      body: z.string().trim().min(1).max(5000),
+      mentionUserIds: z.array(z.string().uuid()).max(500).default([])
+    }).parse(req.body);
+    const mentions = await resolveChannelMentions(
+      req.params.channelId,
+      req.auth.organizationId,
+      [...new Set(mentionUserIds)],
+      body
+    );
+    if (!mentions) return res.status(400).json({ error: "One or more mentions are not available in this channel" });
+    const [original] = await sql`
+      SELECT message.mentions
+      FROM channel_messages message
+      JOIN channel_members member ON member.channel_id = message.channel_id
+        AND member.user_id = ${req.auth.userId}
+      WHERE message.id = ${req.params.messageId}
+        AND message.channel_id = ${req.params.channelId}
+        AND message.sender_id = ${req.auth.userId}
+        AND message.deleted_at IS NULL
+    `;
+    if (!original) return res.status(403).json({ error: "Only the sender can edit this message" });
+    const previousMentionIds = new Set((original.mentions || []).map((mention) => mention.id));
+    const addedMentions = mentions.filter((mention) => !previousMentionIds.has(mention.id));
     const [updated] = await sql`
       UPDATE channel_messages message
-      SET body = ${body}, edited_at = NOW()
+      SET body = ${body}, mentions = ${JSON.stringify(mentions)}::jsonb, edited_at = NOW()
       FROM channel_members member
       WHERE message.id = ${req.params.messageId}
         AND message.channel_id = ${req.params.channelId}
@@ -881,11 +972,58 @@ workspaceRouter.patch("/channels/:channelId/messages/:messageId", async (req, re
         AND message.deleted_at IS NULL
         AND member.channel_id = message.channel_id
         AND member.user_id = ${req.auth.userId}
-      RETURNING message.id, message.body, message.edited_at
+      RETURNING message.id, message.body, message.mentions, message.edited_at
     `;
     if (!updated) return res.status(403).json({ error: "Only the sender can edit this message" });
     const result = { ...updated, channelId: req.params.channelId };
-    req.app.get("io")?.to(`channel:${req.params.channelId}`).emit("channel:message-edited", result);
+    const io = req.app.get("io");
+    if (addedMentions.length) {
+      const addedMembers = await sql`
+        INSERT INTO channel_members (channel_id, user_id)
+        SELECT channel.id, mentioned.id
+        FROM channels channel
+        JOIN users mentioned ON mentioned.id = ANY(${addedMentions.map((mention) => mention.id)}::uuid[])
+        WHERE channel.id = ${req.params.channelId}
+          AND channel.organization_id = ${req.auth.organizationId}
+        ON CONFLICT DO NOTHING
+        RETURNING user_id
+      `;
+      for (const member of addedMembers) {
+        io?.in(`user:${member.user_id}`).socketsJoin(`channel:${req.params.channelId}`);
+        io?.to(`user:${member.user_id}`).emit("channel:membership-updated", {
+          channel_id: req.params.channelId,
+          action: "added"
+        });
+      }
+      if (addedMembers.length) invalidateCache("channel-memberships:", "socket-memberships:");
+    }
+    io?.to(`channel:${req.params.channelId}`).emit("channel:message-edited", result);
+    if (addedMentions.length) {
+      const [channel] = await sql`SELECT name FROM channels WHERE id = ${req.params.channelId}`;
+      const [sender] = await sql`
+        SELECT CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member')
+                    ELSE full_name END AS sender_name
+        FROM users WHERE id = ${req.auth.userId}
+      `;
+      const notification = {
+        ...result,
+        body,
+        sender_id: req.auth.userId,
+        sender_name: sender.sender_name,
+        channel_id: req.params.channelId,
+        channel_name: channel?.name
+      };
+      for (const mention of addedMentions) {
+        io?.to(`user:${mention.id}`).emit("channel:mention", notification);
+        sendPushToUser(mention.id, {
+          type: "mention",
+          title: `${sender.sender_name} mentioned you in #${channel?.name || "group"}`,
+          body: body.slice(0, 180),
+          tag: `mention-${updated.id}`,
+          url: `/?view=chat&channel=${req.params.channelId}`
+        }).catch(console.error);
+      }
+    }
     res.json(result);
   } catch (error) { next(error); }
 });
@@ -953,7 +1091,7 @@ workspaceRouter.get("/direct/:userId", async (req, res, next) => {
         AND read_at IS NULL
     `;
     const messages = await sql`
-      SELECT dm.id, dm.body, dm.sent_at, u.id AS sender_id,
+      SELECT dm.id, dm.body, dm.sent_at, dm.mentions, u.id AS sender_id,
              CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS sender_name,
              u.initials, u.avatar_color,
              a.id AS attachment_id, a.file_name, a.mime_type, a.file_size,
@@ -1006,29 +1144,215 @@ workspaceRouter.post("/direct/:userId/read", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+workspaceRouter.post("/direct/:userId/group", async (req, res, next) => {
+  try {
+    const input = z.object({
+      body: z.string().trim().min(1).max(5000),
+      attachmentId: z.string().uuid().nullable().optional(),
+      replyTo: z.string().uuid().nullable().optional(),
+      mentionUserIds: z.array(z.string().uuid()).min(1).max(500)
+    }).parse(req.body);
+    const [colleague] = await sql`
+      SELECT id,
+             CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member')
+                  ELSE full_name END AS name
+      FROM users
+      WHERE id = ${req.params.userId}
+        AND organization_id = ${req.auth.organizationId}
+        AND employment_status = 'active'
+        AND deleted_at IS NULL
+    `;
+    if (!colleague || colleague.id === req.auth.userId) {
+      return res.status(400).json({ error: "Select another employee" });
+    }
+    const mentions = await resolveDirectMentions(
+      req.auth.organizationId,
+      [...new Set(input.mentionUserIds)],
+      input.body
+    );
+    if (!mentions) return res.status(400).json({ error: "One or more mentions are not available" });
+    if (!mentions.some((mention) => mention.id !== req.auth.userId && mention.id !== colleague.id)) {
+      return res.status(400).json({ error: "Select an employee outside this conversation to create a group chat" });
+    }
+
+    const pair = [req.auth.userId, colleague.id].sort();
+    const [conversationOwner] = await sql`
+      SELECT CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member')
+                  ELSE full_name END AS name
+      FROM users WHERE id = ${req.auth.userId}
+    `;
+    const nameSlug = [conversationOwner.name, colleague.name]
+      .map((value) => value.normalize("NFKD").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, ""))
+      .filter(Boolean)
+      .join("-")
+      .slice(0, 36)
+      .toLowerCase() || "team";
+    const pairHash = crypto.createHash("sha256").update(pair.join(":")).digest("hex").slice(0, 8);
+    const name = `chat-${nameSlug}-${pairHash}`;
+    const participants = [...new Set([...pair, ...mentions.map((mention) => mention.id)])];
+    const transactionResult = await withTransaction(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${name}, 0))`;
+      let [channel] = await tx`
+        SELECT id, name, description, is_private, channel_type, created_by
+        FROM channels
+        WHERE organization_id = ${req.auth.organizationId} AND name = ${name}
+      `;
+      if (!channel) {
+        [channel] = await tx`
+          INSERT INTO channels (organization_id, name, description, is_private, channel_type, created_by)
+          VALUES (
+            ${req.auth.organizationId}, ${name}, 'Direct conversation with additional employees', TRUE,
+            'group_dm', ${req.auth.userId}
+          )
+          RETURNING id, name, description, is_private, channel_type, created_by
+        `;
+        await tx`
+          INSERT INTO channel_members (channel_id, user_id)
+          SELECT ${channel.id}, member_id FROM unnest(${participants}::uuid[]) AS member_id
+          ON CONFLICT DO NOTHING
+        `;
+      } else {
+        await tx`
+          INSERT INTO channel_members (channel_id, user_id)
+          SELECT ${channel.id}, member_id FROM unnest(${participants}::uuid[]) AS member_id
+          ON CONFLICT DO NOTHING
+        `;
+      }
+
+      const copied = await tx`
+        INSERT INTO channel_messages (
+          id, channel_id, sender_id, body, sent_at, attachment_id, reply_to_id,
+          deleted_at, deleted_by, edited_at, mentions
+        )
+        SELECT dm.id, ${channel.id}, dm.sender_id, dm.body, dm.sent_at, dm.attachment_id,
+               dm.reply_to_id, dm.deleted_at, dm.deleted_by, dm.edited_at, dm.mentions
+        FROM direct_messages dm
+        WHERE dm.organization_id = ${req.auth.organizationId}
+          AND ((dm.sender_id = ${pair[0]} AND dm.recipient_id = ${pair[1]})
+            OR (dm.sender_id = ${pair[1]} AND dm.recipient_id = ${pair[0]}))
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id
+      `;
+      const copiedIds = copied.map((message) => message.id);
+      if (copiedIds.length) {
+        await tx`
+          INSERT INTO channel_message_reactions (message_id, user_id, emoji, reacted_at)
+          SELECT message_id, user_id, emoji, reacted_at
+          FROM direct_message_reactions
+          WHERE message_id = ANY(${copiedIds}::uuid[])
+          ON CONFLICT DO NOTHING
+        `;
+        await tx`
+          INSERT INTO channel_message_hidden (message_id, user_id, hidden_at)
+          SELECT message_id, user_id, hidden_at
+          FROM direct_message_hidden
+          WHERE message_id = ANY(${copiedIds}::uuid[])
+          ON CONFLICT DO NOTHING
+        `;
+      }
+
+      const [message] = await tx`
+        INSERT INTO channel_messages (channel_id, sender_id, body, attachment_id, reply_to_id, mentions)
+        SELECT ${channel.id}, ${req.auth.userId}, ${input.body}, attachment.id,
+          (SELECT reply.id FROM channel_messages reply
+           JOIN channel_members member ON member.channel_id = reply.channel_id
+             AND member.user_id = ${req.auth.userId}
+           WHERE reply.id = ${input.replyTo || null}
+             AND reply.channel_id = ${channel.id}
+             AND reply.deleted_at IS NULL),
+          ${JSON.stringify(mentions)}::jsonb
+        FROM (SELECT 1) seed
+        LEFT JOIN message_attachments attachment ON attachment.id = ${input.attachmentId || null}
+          AND attachment.organization_id = ${req.auth.organizationId}
+          AND attachment.uploader_id = ${req.auth.userId}
+        WHERE ${input.attachmentId || null}::uuid IS NULL OR attachment.id IS NOT NULL
+        RETURNING id, body, sent_at, attachment_id, reply_to_id, mentions
+      `;
+      if (!message) throw Object.assign(new Error("The selected attachment is not available"), { status: 400 });
+      return { channel, message };
+    });
+
+    const { channel, message } = transactionResult;
+    const io = req.app.get("io");
+    const memberRows = await sql`
+      SELECT user_id FROM channel_members WHERE channel_id = ${channel.id}
+    `;
+    for (const member of memberRows) {
+      io?.in(`user:${member.user_id}`).socketsJoin(`channel:${channel.id}`);
+      io?.to(`user:${member.user_id}`).emit("channel:membership-updated", {
+        channel_id: channel.id,
+        action: "added"
+      });
+    }
+    invalidateCache("channel-memberships:", "socket-memberships:");
+
+    const [sender] = await sql`
+      SELECT id AS sender_id,
+             CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member')
+                  ELSE full_name END AS sender_name,
+             initials, avatar_color, title
+      FROM users WHERE id = ${req.auth.userId}
+    `;
+    const [attachment] = message.attachment_id ? await sql`
+      SELECT file_name, mime_type, file_size FROM message_attachments WHERE id = ${message.attachment_id}
+    ` : [null];
+    const result = { ...message, ...sender, ...attachment, channel_id: channel.id, reactions: [] };
+    io?.to(`channel:${channel.id}`).emit("channel:message", result);
+    const notifyMentions = mentions.filter((mention) => mention.id !== req.auth.userId);
+    const mentionIds = new Set(notifyMentions.map((mention) => mention.id));
+    sendPushToChannel(channel.id, req.auth.userId, {
+      title: `${sender.sender_name} in ${channel.name}`,
+      body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
+      tag: `channel-${channel.id}`,
+      url: `/?view=chat&channel=${channel.id}`
+    }, [...mentionIds]).catch(console.error);
+    for (const mention of notifyMentions) {
+      sendPushToUser(mention.id, {
+        type: "mention",
+        title: `${sender.sender_name} mentioned you in a group conversation`,
+        body: input.body.slice(0, 180),
+        tag: `mention-${message.id}`,
+        url: `/?view=chat&channel=${channel.id}`
+      }).catch(console.error);
+    }
+    res.status(201).json({ ...result, convertedChannel: channel });
+  } catch (error) { next(error); }
+});
+
 workspaceRouter.post("/direct/:userId", async (req, res, next) => {
   try {
     const input = z.object({
       body: z.string().trim().max(5000).default(""),
       attachmentId: z.string().uuid().nullable().optional(),
-      replyTo: z.string().uuid().nullable().optional()
+      replyTo: z.string().uuid().nullable().optional(),
+      mentionUserIds: z.array(z.string().uuid()).max(500).default([])
     }).refine((value) => value.body || value.attachmentId, { message: "Enter a message or attach a file" }).parse(req.body);
     const [colleague] = await sql`SELECT id FROM users WHERE id = ${req.params.userId} AND organization_id = ${req.auth.organizationId}`;
     if (!colleague || colleague.id === req.auth.userId) return res.status(400).json({ error: "Select another employee" });
+    const mentions = await resolveDirectMentions(
+      req.auth.organizationId,
+      [...new Set(input.mentionUserIds)],
+      input.body
+    );
+    if (!mentions) return res.status(400).json({ error: "One or more mentions are not available" });
+    if (mentions.some((mention) => mention.id !== req.auth.userId && mention.id !== colleague.id)) {
+      return res.status(400).json({ error: "Adding another employee will start a group conversation" });
+    }
     const [message] = await sql`
-      INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body, attachment_id, reply_to_id)
+      INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body, attachment_id, reply_to_id, mentions)
       SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${req.params.userId}, ${input.body}, a.id,
         (SELECT reply.id FROM direct_messages reply
          WHERE reply.id = ${input.replyTo || null}
            AND reply.organization_id = ${req.auth.organizationId}
            AND ((reply.sender_id = ${req.auth.userId} AND reply.recipient_id = ${req.params.userId})
              OR (reply.sender_id = ${req.params.userId} AND reply.recipient_id = ${req.auth.userId}))
-           AND reply.deleted_at IS NULL)
+           AND reply.deleted_at IS NULL),
+        ${JSON.stringify(mentions)}::jsonb
       FROM (SELECT 1) seed
       LEFT JOIN message_attachments a ON a.id = ${input.attachmentId || null}
         AND a.organization_id = ${req.auth.organizationId} AND a.uploader_id = ${req.auth.userId}
       WHERE ${input.attachmentId || null}::uuid IS NULL OR a.id IS NOT NULL
-      RETURNING id, body, sent_at, attachment_id, reply_to_id
+      RETURNING id, body, sent_at, attachment_id, reply_to_id, mentions
     `;
     if (!message) return res.status(400).json({ error: "The selected attachment is not available" });
     const [attachment] = message.attachment_id ? await sql`
@@ -1044,7 +1368,9 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
     const result = { ...message, ...sender, ...attachment, ...reply, reactions: [] };
     req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", { ...result, recipient_id: req.params.userId });
     sendPushToUser(req.params.userId, {
-      title: sender.sender_name,
+      title: mentions.some((mention) => mention.id === req.params.userId)
+        ? `${sender.sender_name} mentioned you`
+        : sender.sender_name,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `direct-${req.auth.userId}`,
       url: "/"
@@ -1055,16 +1381,28 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
 
 workspaceRouter.patch("/direct/:userId/messages/:messageId", async (req, res, next) => {
   try {
-    const { body } = z.object({ body: z.string().trim().min(1).max(5000) }).parse(req.body);
+    const { body, mentionUserIds } = z.object({
+      body: z.string().trim().min(1).max(5000),
+      mentionUserIds: z.array(z.string().uuid()).max(500).default([])
+    }).parse(req.body);
+    const mentions = await resolveDirectMentions(
+      req.auth.organizationId,
+      [...new Set(mentionUserIds)],
+      body
+    );
+    if (!mentions) return res.status(400).json({ error: "One or more mentions are not available" });
+    if (mentions.some((mention) => mention.id !== req.auth.userId && mention.id !== req.params.userId)) {
+      return res.status(400).json({ error: "Adding another employee will start a group conversation" });
+    }
     const [updated] = await sql`
       UPDATE direct_messages
-      SET body = ${body}, edited_at = NOW()
+      SET body = ${body}, mentions = ${JSON.stringify(mentions)}::jsonb, edited_at = NOW()
       WHERE id = ${req.params.messageId}
         AND organization_id = ${req.auth.organizationId}
         AND sender_id = ${req.auth.userId}
         AND recipient_id = ${req.params.userId}
         AND deleted_at IS NULL
-      RETURNING id, body, edited_at, sender_id, recipient_id
+      RETURNING id, body, mentions, edited_at, sender_id, recipient_id
     `;
     if (!updated) return res.status(403).json({ error: "Only the sender can edit this message" });
     for (const userId of [updated.sender_id, updated.recipient_id]) {
