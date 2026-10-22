@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Ban, CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, UserPlus, Users, Video } from "lucide-react";
+import { useRef, useState } from "react";
+import { Ban, CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, UserPlus, Users, Video, X } from "lucide-react";
 import { format } from "date-fns";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
@@ -8,8 +8,14 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
   const [instantOpen, setInstantOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [peopleTarget, setPeopleTarget] = useState(null);
-  const scheduled = events.filter((event) => new Date(event.ends_at) > new Date());
+  const cancelDialogRef = useRef(null);
+  const scheduled = events.filter((event) => event.cancelled_at || new Date(event.ends_at) > new Date());
   const upcoming = scheduled.filter((event) => !event.cancelled_at);
+
+  function openCancelDialog(event) {
+    setCancelTarget(event);
+    cancelDialogRef.current?.showModal();
+  }
 
   function copyLink(event) {
     const url = new URL(window.location.href);
@@ -44,7 +50,23 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
         </div>
       </section>
       {instantOpen && <InstantMeeting people={people.filter((person) => person.id !== user.id)} onClose={() => setInstantOpen(false)} onStart={async (details) => { await onStartMeeting(details); setInstantOpen(false); }} />}
-      {cancelTarget && <CancelMeeting event={cancelTarget} onClose={() => setCancelTarget(null)} onConfirm={async (reason) => { await onCancelEvent(cancelTarget, reason); setCancelTarget(null); }} />}
+      <dialog
+        ref={cancelDialogRef}
+        className="modal cancel-meeting-dialog"
+        aria-labelledby="cancel-meeting-title"
+        onMouseDown={(event) => event.target === event.currentTarget && event.currentTarget.close()}
+        onClose={() => setCancelTarget(null)}
+      >
+        {cancelTarget && <CancelMeeting
+          key={cancelTarget.id}
+          event={cancelTarget}
+          onClose={() => cancelDialogRef.current?.close()}
+          onConfirm={(reason) => {
+            onCancelEvent(cancelTarget, reason);
+            cancelDialogRef.current?.close();
+          }}
+        />}
+      </dialog>
       {peopleTarget && <InvitedPeople event={events.find((event) => event.id === peopleTarget.id) || peopleTarget} people={people} canAdd={!peopleTarget.cancelled_at && (peopleTarget.organizer_id === user.id || ["hr", "senior_leader"].includes(user.role))} onClose={() => setPeopleTarget(null)} onAdd={(ids) => onAddAttendees(peopleTarget, ids)} />}
     </div>
   );
@@ -103,22 +125,25 @@ function InvitedPeople({ event, people, canAdd, onClose, onAdd }) {
 
 function CancelMeeting({ event, onClose, onConfirm }) {
   const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function submit(e) {
+
+  function submit(e) {
     e.preventDefault();
-    setBusy(true);
-    try { await onConfirm(reason); }
-    finally { setBusy(false); }
+    onConfirm(reason);
   }
-  return <Modal title="Cancel event or meeting" subtitle={event.title} onClose={onClose}>
+
+  return <>
+    <header className="modal-header">
+      <div><h2 id="cancel-meeting-title">Cancel event or meeting</h2><p>{event.title}</p></div>
+      <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+    </header>
     <form className="cancel-meeting-form" onSubmit={submit}>
       <span className="cancel-meeting-icon"><Ban size={25} /></span>
       <h3>Notify all invited employees?</h3>
       <p>The event will remain in everyone’s calendar marked as cancelled. Invited employees will receive an in-app and push notification.</p>
       <label><span>Cancellation reason (optional)</span><textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="For example: Rescheduled to a later date" /></label>
-      <footer className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Keep event</button><button className="button button-danger" disabled={busy}><Ban size={16} /> {busy ? "Cancelling..." : "Cancel and notify"}</button></footer>
+      <footer className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Keep event</button><button className="button button-danger"><Ban size={16} /> Cancel and notify</button></footer>
     </form>
-  </Modal>;
+  </>;
 }
 
 function InstantMeeting({ people, onStart, onClose }) {

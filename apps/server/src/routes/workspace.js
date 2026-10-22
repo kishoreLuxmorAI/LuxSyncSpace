@@ -300,16 +300,7 @@ async function currentRole(userId) {
   return user?.role;
 }
 
-async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false }) {
-  if (!recipientIds.length) return;
-  const meetingUrl = `${config.appUrl}/?meeting=${event.id}`;
-  const messageBody = `${isCall ? `${event.meeting_mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${event.title}\n${meetingUrl}`;
-  const messages = await sql`
-    INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
-    SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id, ${messageBody}
-    FROM unnest(${recipientIds}::uuid[]) AS recipient_id
-    RETURNING id, recipient_id, body, sent_at
-  `;
+function notifyMeetingInvitees({ req, event, messages, organizer, isCall = false }) {
   for (const message of messages) {
     const realtimeMessage = {
       ...message,
@@ -340,6 +331,19 @@ async function shareMeetingInvitation({ req, event, recipientIds, organizer, isC
       } : {})
     }).catch(console.error);
   }
+}
+
+async function shareMeetingInvitation({ req, event, recipientIds, organizer, isCall = false }) {
+  if (!recipientIds.length) return;
+  const meetingUrl = `${config.appUrl}/?meeting=${event.id}`;
+  const messageBody = `${isCall ? `${event.meeting_mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${event.title}\n${meetingUrl}`;
+  const messages = await sql`
+    INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+    SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id, ${messageBody}
+    FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+    RETURNING id, recipient_id, body, sent_at
+  `;
+  notifyMeetingInvitees({ req, event, messages, organizer, isCall });
 }
 
 workspaceRouter.post("/channels", async (req, res, next) => {
@@ -1156,24 +1160,65 @@ workspaceRouter.post("/events", async (req, res, next) => {
     }).parse(req.body);
     if (new Date(input.endsAt) <= new Date(input.startsAt)) return res.status(400).json({ error: "End time must be after start time" });
     const selectedAttendees = [...new Set(input.attendeeIds)].filter((id) => id !== req.auth.userId);
-    const validAttendees = selectedAttendees.length ? await sql`
-      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND id = ANY(${selectedAttendees}::uuid[])
-    ` : [];
-    if (validAttendees.length !== selectedAttendees.length) return res.status(400).json({ error: "One or more selected employees are unavailable" });
-    const [event] = await sql`
-      INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at)
-      VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, ${input.description}, ${input.location}, ${input.startsAt}, ${input.endsAt})
-      RETURNING *
+    const [result] = await sql`
+      WITH requested_attendees AS (
+        SELECT DISTINCT attendee_id AS id
+        FROM unnest(${selectedAttendees}::uuid[]) AS attendee_id
+      ),
+      valid_attendees AS (
+        SELECT users.id
+        FROM users
+        JOIN requested_attendees ON requested_attendees.id = users.id
+        WHERE users.organization_id = ${req.auth.organizationId}
+      ),
+      attendee_validation AS (
+        SELECT COUNT(*) = (SELECT COUNT(*) FROM requested_attendees) AS valid
+        FROM valid_attendees
+      ),
+      created_event AS (
+        INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, ${input.description},
+          ${input.location}, ${input.startsAt}, ${input.endsAt}
+        WHERE (SELECT valid FROM attendee_validation)
+        RETURNING *
+      ),
+      added_attendees AS (
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT created_event.id, attendee.id, 'accepted'
+        FROM created_event
+        CROSS JOIN (
+          SELECT ${req.auth.userId}::uuid AS id
+          UNION
+          SELECT id FROM requested_attendees
+        ) AS attendee
+        ON CONFLICT DO NOTHING
+        RETURNING event_id
+      ),
+      organizer AS (
+        SELECT full_name, initials, avatar_color
+        FROM users
+        WHERE id = ${req.auth.userId}
+      ),
+      created_messages AS (
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, requested_attendees.id,
+          ${`Meeting invitation: ${input.title}\n${config.appUrl}/?meeting=`} || created_event.id::text
+        FROM created_event
+        CROSS JOIN requested_attendees
+        RETURNING id, recipient_id, body, sent_at
+      )
+      SELECT attendee_validation.valid AS attendees_valid,
+        (SELECT to_jsonb(created_event) FROM created_event) AS event,
+        (SELECT to_jsonb(organizer) FROM organizer) AS organizer,
+        COALESCE(
+          (SELECT json_agg(to_jsonb(created_messages)) FROM created_messages),
+          '[]'::json
+        ) AS messages
+      FROM attendee_validation
     `;
-    const allAttendeeIds = [...new Set([req.auth.userId, ...input.attendeeIds])];
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${event.id}, attendee_id, 'accepted' FROM unnest(${allAttendeeIds}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
-    const attendeeIds = selectedAttendees;
-    const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds: attendeeIds, organizer });
+    if (!result.attendees_valid) return res.status(400).json({ error: "One or more selected employees are unavailable" });
+    const { event, organizer, messages } = result;
+    notifyMeetingInvitees({ req, event, messages, organizer });
     invalidateCache(`events:${req.auth.organizationId}`);
     res.status(201).json(event);
   } catch (error) { next(error); }
@@ -1233,24 +1278,69 @@ workspaceRouter.post("/meetings/instant", async (req, res, next) => {
       isCall: z.boolean().default(false)
     }).parse(req.body || {});
     const recipientIds = [...new Set(input.attendeeIds)].filter((id) => id !== req.auth.userId);
-    const validRecipients = recipientIds.length ? await sql`
-      SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND id = ANY(${recipientIds}::uuid[])
-    ` : [];
-    if (validRecipients.length !== recipientIds.length) return res.status(400).json({ error: "One or more selected employees are unavailable" });
-    const [event] = await sql`
-      INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at, is_online, meeting_mode)
-      VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, 'Instant LuxSyncspace meeting',
-        'LuxSyncspace meeting', NOW(), NOW() + INTERVAL '1 hour', TRUE, ${input.mode})
-      RETURNING *
+    const messagePrefix = `${input.isCall ? `${input.mode === "audio" ? "Voice" : "Video"} call` : "Meeting invitation"}: ${input.title}\n${config.appUrl}/?meeting=`;
+    const [result] = await sql`
+      WITH requested_recipients AS (
+        SELECT DISTINCT recipient_id
+        FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+      ),
+      valid_recipients AS (
+        SELECT users.id
+        FROM users
+        JOIN requested_recipients ON requested_recipients.recipient_id = users.id
+        WHERE users.organization_id = ${req.auth.organizationId}
+      ),
+      recipient_validation AS (
+        SELECT
+          (SELECT COUNT(*) FROM requested_recipients)
+          = (SELECT COUNT(*) FROM valid_recipients) AS valid
+      ),
+      created_event AS (
+        INSERT INTO events (organization_id, organizer_id, title, description, location, starts_at, ends_at, is_online, meeting_mode)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${input.title}, 'Instant LuxSyncspace meeting',
+          'LuxSyncspace meeting', NOW(), NOW() + INTERVAL '1 hour', TRUE, ${input.mode}
+        FROM recipient_validation
+        WHERE valid
+        RETURNING *
+      ),
+      added_attendees AS (
+        INSERT INTO event_attendees (event_id, user_id, response)
+        SELECT created_event.id, attendee.user_id, 'accepted'
+        FROM created_event
+        CROSS JOIN LATERAL (
+          SELECT ${req.auth.userId}::uuid AS user_id
+          UNION ALL
+          SELECT id FROM valid_recipients
+        ) AS attendee
+        ON CONFLICT DO NOTHING
+        RETURNING event_id
+      ),
+      organizer AS (
+        SELECT id, full_name, initials, avatar_color, title
+        FROM users
+        WHERE id = ${req.auth.userId}
+      ),
+      created_messages AS (
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient.id,
+          ${messagePrefix} || created_event.id::text
+        FROM created_event
+        CROSS JOIN valid_recipients AS recipient
+        RETURNING id, recipient_id, body, sent_at
+      )
+      SELECT
+        recipient_validation.valid AS recipients_valid,
+        (SELECT to_jsonb(created_event) FROM created_event) AS event,
+        (SELECT to_jsonb(organizer) FROM organizer) AS organizer,
+        COALESCE(
+          (SELECT json_agg(to_jsonb(created_messages)) FROM created_messages),
+          '[]'::json
+        ) AS messages
+      FROM recipient_validation
     `;
-    await sql`
-      INSERT INTO event_attendees (event_id, user_id, response)
-      SELECT ${event.id}, attendee_id, 'accepted'
-      FROM unnest(${[req.auth.userId, ...recipientIds]}::uuid[]) AS attendee_id
-      ON CONFLICT DO NOTHING
-    `;
-    const [organizer] = await sql`SELECT id, full_name, initials, avatar_color, title FROM users WHERE id = ${req.auth.userId}`;
-    await shareMeetingInvitation({ req, event, recipientIds, organizer, isCall: input.isCall });
+    if (!result.recipients_valid) return res.status(400).json({ error: "One or more selected employees are unavailable" });
+    const { event, organizer, messages } = result;
+    notifyMeetingInvitees({ req, event, messages, organizer, isCall: input.isCall });
     invalidateCache(`events:${req.auth.organizationId}`);
     res.status(201).json(event);
   } catch (error) { next(error); }
@@ -1303,38 +1393,51 @@ workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
     if (!canCancel) return res.status(403).json({ error: "Only the organizer, HR, or a senior leader can cancel this event" });
     if (event.cancelled_at) return res.json({ event, message: "This event is already cancelled" });
 
+    const [attendees, cancelledBy] = await Promise.all([
+      sql`
+        SELECT ea.user_id FROM event_attendees ea
+        WHERE ea.event_id = ${eventId} AND ea.user_id <> ${req.auth.userId}
+      `,
+      sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`
+    ]);
+    if (!cancelledBy) return res.status(401).json({ error: "Cancelling user not found" });
+
     const [cancelled] = await sql`
       UPDATE events
       SET cancelled_at = NOW(), cancelled_by = ${req.auth.userId}, cancellation_reason = ${input.reason}
-      WHERE id = ${eventId}
+      WHERE id = ${eventId} AND cancelled_at IS NULL
       RETURNING *
     `;
-    const attendees = await sql`
-      SELECT ea.user_id FROM event_attendees ea
-      WHERE ea.event_id = ${eventId} AND ea.user_id <> ${req.auth.userId}
-    `;
-    const [cancelledBy] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
+    if (!cancelled) return res.status(409).json({ error: "This event was already cancelled" });
+
+    invalidateCache(`events:${req.auth.organizationId}`);
     const title = `Cancelled: ${event.title}`;
     const body = `${cancelledBy.full_name} cancelled this ${event.is_online ? "meeting" : "event"}${input.reason ? `. Reason: ${input.reason}` : "."}`;
     const recipientIds = attendees.map((attendee) => attendee.user_id);
+
     if (recipientIds.length) {
-      const cancellationMessages = await sql`
-        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
-        SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id,
-          ${`Meeting cancelled: ${event.title}${input.reason ? `\nReason: ${input.reason}` : ""}`}
-        FROM unnest(${recipientIds}::uuid[]) AS recipient_id
-        RETURNING id, recipient_id, body, sent_at
-      `;
-      for (const message of cancellationMessages) {
-        req.app.get("io")?.to(`user:${message.recipient_id}`).emit("direct:message", {
-          ...message,
-          sender_id: req.auth.userId,
-          sender_name: cancelledBy.full_name,
-          initials: cancelledBy.initials,
-          avatar_color: cancelledBy.avatar_color
-        });
+      try {
+        const cancellationMessages = await sql`
+          INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+          SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id,
+            ${`Meeting cancelled: ${event.title}${input.reason ? `\nReason: ${input.reason}` : ""}`}
+          FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+          RETURNING id, recipient_id, body, sent_at
+        `;
+        for (const message of cancellationMessages) {
+          req.app.get("io")?.to(`user:${message.recipient_id}`).emit("direct:message", {
+            ...message,
+            sender_id: req.auth.userId,
+            sender_name: cancelledBy.full_name,
+            initials: cancelledBy.initials,
+            avatar_color: cancelledBy.avatar_color
+          });
+        }
+      } catch (error) {
+        console.error(`Could not save cancellation messages for event ${eventId}`, error);
       }
     }
+
     for (const attendee of attendees) {
       req.app.get("io")?.to(`user:${attendee.user_id}`).emit("event:cancelled", {
         event_id: eventId,
@@ -1346,11 +1449,10 @@ workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
         title,
         body,
         tag: `event-cancelled-${eventId}`,
-        url: "/?view=calendar"
-      }).catch(console.error);
+        url: "/?view=meetings"
+      }).catch((error) => console.error("Could not send event cancellation push notification", error));
     }
     req.app.get("io")?.to(`meeting:${eventId}`).emit("meeting:cancelled", { title, body });
-    invalidateCache(`events:${req.auth.organizationId}`);
     res.json({ event: cancelled, message: "Event cancelled and attendees notified" });
   } catch (error) { next(error); }
 });

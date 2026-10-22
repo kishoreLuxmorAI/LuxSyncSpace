@@ -97,16 +97,42 @@ io.on("connection", (socket) => {
 
   socket.on("meeting:join", async ({ roomId }, acknowledge = () => {}) => {
     try {
-      const [meeting] = await sql`
-        SELECT id, title, starts_at, ends_at
-        FROM events WHERE id = ${roomId} AND organization_id = ${socket.auth.organizationId}
-          AND is_online = TRUE AND cancelled_at IS NULL AND ended_at IS NULL
+      const [joinData] = await sql`
+        SELECT
+          event.id AS meeting_id,
+          event.title AS meeting_title,
+          event.starts_at,
+          event.ends_at,
+          profile.id AS profile_id,
+          CASE WHEN profile.hide_full_name
+              THEN COALESCE(NULLIF(profile.display_name, ''), 'Team member')
+              ELSE profile.full_name
+          END AS profile_full_name,
+          profile.title AS profile_title,
+          profile.initials AS profile_initials,
+          profile.avatar_color AS profile_avatar_color
+        FROM events AS event
+        JOIN users AS profile ON profile.id = ${socket.auth.userId}
+        WHERE event.id = ${roomId}
+          AND event.organization_id = ${socket.auth.organizationId}
+          AND event.is_online = TRUE
+          AND event.cancelled_at IS NULL
+          AND event.ended_at IS NULL
       `;
-      if (!meeting) return acknowledge({ ok: false, error: "Meeting not found or access denied" });
-      const [profile] = await sql`
-        SELECT id, CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member') ELSE full_name END AS full_name,
-               title, initials, avatar_color FROM users WHERE id = ${socket.auth.userId}
-      `;
+      if (!joinData) return acknowledge({ ok: false, error: "Meeting not found or access denied" });
+      const meeting = {
+        id: joinData.meeting_id,
+        title: joinData.meeting_title,
+        starts_at: joinData.starts_at,
+        ends_at: joinData.ends_at
+      };
+      const profile = {
+        id: joinData.profile_id,
+        full_name: joinData.profile_full_name,
+        title: joinData.profile_title,
+        initials: joinData.profile_initials,
+        avatar_color: joinData.profile_avatar_color
+      };
       if (socket.meetingRoom) {
         socket.leave(socket.meetingRoom);
         socket.to(socket.meetingRoom).emit("meeting:user-left", { socketId: socket.id });
