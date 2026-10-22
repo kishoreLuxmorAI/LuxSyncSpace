@@ -2,7 +2,6 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Pencil, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, authStore, SOCKET_URL, socketOptions } from "../lib/api";
-import { containsMention, getMentionContext, getMentionSuggestions, splitMessageBody } from "../lib/mentions";
 import { Avatar } from "../components/Avatar";
 import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
@@ -20,9 +19,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState("");
-  const [draftMentions, setDraftMentions] = useState([]);
-  const [mentionContext, setMentionContext] = useState(null);
-  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -52,10 +48,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const selectedChannelRef = useRef(null);
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
-  const mentionCandidates = selected ? channelMembers : selectedPerson ? [selectedPerson] : [];
-  const mentionSuggestions = useMemo(() => mentionContext
-    ? getMentionSuggestions(mentionCandidates, user.id, mentionContext.query)
-    : [], [mentionContext, mentionCandidates, user.id]);
 
   function openChannel(channelId) {
     setSelected(channelId);
@@ -105,11 +97,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     setReactionMessageId(null);
     setReplyingTo(null);
     setEditingMessage(null);
-    setMentionContext(null);
-    setDraftMentions([]);
   }, [selected, selectedPerson?.id]);
-
-  useEffect(() => setActiveMentionIndex(0), [mentionContext?.query]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -177,12 +165,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     });
     socketRef.current.on("channel:message-edited", (updated) => {
       if (selectedChannelRef.current !== updated.channelId) return;
-      setMessages((current) => current.map((item) => item.id === updated.id ? {
-        ...item,
-        body: updated.body,
-        mentioned_user_ids: updated.mentioned_user_ids || [],
-        edited_at: updated.edited_at
-      } : item));
+      setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
     });
     socketRef.current.on("channel:message-reaction", (update) => {
       if (selectedChannelRef.current !== update.channelId) return;
@@ -315,15 +298,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     if ((!message.trim() && !attachment) || (!selected && !selectedPerson)) return;
     setBusy(true);
     const body = message;
-    const mentionedUserIds = selected || selectedPerson
-      ? draftMentions.filter((mention) => containsMention(body, mention.full_name)).map((mention) => mention.id)
-      : [];
     const selectedAttachment = attachment;
     const selectedReply = replyingTo;
     const selectedEdit = editingMessage;
     setMessage("");
-    setDraftMentions([]);
-    setMentionContext(null);
     setAttachment(null);
     setReplyingTo(null);
     setEditingMessage(null);
@@ -331,33 +309,19 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     try {
       if (selectedEdit) {
         const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${selectedEdit.id}` : `/channels/${selected}/messages/${selectedEdit.id}`;
-        const updated = await api(endpoint, {
-          method: "PATCH",
-          body: JSON.stringify({ body, mentionedUserIds })
-        });
-        setMessages((current) => current.map((item) => item.id === updated.id ? {
-          ...item,
-          body: updated.body,
-          mentioned_user_ids: updated.mentioned_user_ids || [],
-          edited_at: updated.edited_at
-        } : item));
+        const updated = await api(endpoint, { method: "PATCH", body: JSON.stringify({ body }) });
+        setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
         onToast("Message edited");
       } else {
         const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
         const sent = await api(endpoint, {
           method: "POST",
-          body: JSON.stringify({
-            body,
-            attachmentId: selectedAttachment?.id || null,
-            replyTo: selectedReply?.id || null,
-            mentionedUserIds
-          })
+          body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null, replyTo: selectedReply?.id || null })
         });
         setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
       }
     } catch (error) {
       setMessage(body);
-      setDraftMentions(draftMentions);
       setAttachment(selectedAttachment);
       setReplyingTo(selectedReply);
       setEditingMessage(selectedEdit);
@@ -376,11 +340,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   function editMessage(item) {
     setEditingMessage(item);
     setMessage(item.body);
-    setDraftMentions((item.mentioned_user_ids || [])
-      .map((id) => channelMembers.find((member) => member.id === id) || (selectedPerson?.id === id ? selectedPerson : null))
-      .filter(Boolean)
-      .map(({ id, full_name }) => ({ id, full_name })));
-    setMentionContext(null);
     setAttachment(null);
     setReplyingTo(null);
     setMessageMenuId(null);
@@ -485,27 +444,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     requestAnimationFrame(() => {
       element?.focus();
       element?.setSelectionRange(start + emoji.length, start + emoji.length);
-    });
-  }
-
-  function updateMentionContext(value, caret) {
-    setMentionContext(selected || selectedPerson ? getMentionContext(value, caret) : null);
-  }
-
-  function selectMention(person) {
-    if (!mentionContext) return;
-    const insertion = `@${person.full_name} `;
-    const nextMessage = `${message.slice(0, mentionContext.start)}${insertion}${message.slice(mentionContext.end)}`;
-    const caret = mentionContext.start + insertion.length;
-    setMessage(nextMessage);
-    setDraftMentions((current) => [
-      ...current.filter((mention) => mention.id !== person.id),
-      { id: person.id, full_name: person.full_name }
-    ]);
-    setMentionContext(null);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(caret, caret);
     });
   }
 
@@ -686,7 +624,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
                     : <span className="message-sent-status" title="Sent" aria-label="Sent"><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
                     {item.forwarded_from_id && !item.deleted_at && <span className="forwarded-label"><Forward size={12} /> Forwarded</span>}
                     {item.reply_to_id && !item.deleted_at && <div className="message-reply-preview"><b>{item.reply_sender_name || "Message"}</b><span>{item.reply_deleted_at ? "This message was deleted" : item.reply_body}</span></div>}
-                    {item.deleted_at ? <p className="deleted-message"><Trash2 size={14} /> This message was deleted</p> : item.body && <MessageBody body={item.body} mentionedUserIds={item.mentioned_user_ids} people={people} />}
+                    {item.deleted_at ? <p className="deleted-message"><Trash2 size={14} /> This message was deleted</p> : item.body && <MessageBody body={item.body} />}
                     {item.attachment_id && <button className="message-attachment" onClick={() => downloadAttachment(item)}>
                       <span><FileText size={19} /></span><span><b>{item.file_name}</b><small>{formatFileSize(item.file_size)}</small></span><Download size={17} />
                     </button>}
@@ -719,49 +657,11 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             <div ref={endRef} />
           </div>
           <form className="message-composer" onSubmit={send}>
-            {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); setDraftMentions([]); setMentionContext(null); }} aria-label="Cancel edit"><X size={16} /></button></div>}
+            {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
             {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
-            {mentionSuggestions.length > 0 && <div className="mention-suggestions" role="listbox" aria-label="Mention an employee">
-              {mentionSuggestions.map((person, index) => <button
-                type="button"
-                role="option"
-                aria-selected={index === activeMentionIndex}
-                className={index === activeMentionIndex ? "active" : ""}
-                key={person.id}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => selectMention(person)}
-              >
-                <Avatar person={person} size="xs" />
-                <span><b>{person.full_name}</b><small>{person.title}</small></span>
-              </button>)}
-            </div>}
-            <textarea ref={textareaRef} value={message} onChange={(event) => {
-              const value = event.target.value;
-              setMessage(value);
-              updateMentionContext(value, event.target.selectionStart);
-              setDraftMentions((current) => current.filter((mention) => containsMention(value, mention.full_name)));
-            }} onClick={(event) => updateMentionContext(event.currentTarget.value, event.currentTarget.selectionStart)} onKeyUp={(event) => {
-              if (!["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
-                updateMentionContext(event.currentTarget.value, event.currentTarget.selectionStart);
-              }
-            }} onPaste={pasteImage} onKeyDown={(event) => {
-              if (mentionSuggestions.length && event.key === "ArrowDown") {
-                event.preventDefault();
-                setActiveMentionIndex((index) => (index + 1) % mentionSuggestions.length);
-              } else if (mentionSuggestions.length && event.key === "ArrowUp") {
-                event.preventDefault();
-                setActiveMentionIndex((index) => (index - 1 + mentionSuggestions.length) % mentionSuggestions.length);
-              } else if (mentionSuggestions.length && event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                selectMention(mentionSuggestions[activeMentionIndex]);
-              } else if (mentionSuggestions.length && event.key === "Escape") {
-                event.preventDefault();
-                setMentionContext(null);
-              } else if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form.requestSubmit();
-              }
+            <textarea ref={textareaRef} value={message} onChange={(event) => setMessage(event.target.value)} onPaste={pasteImage} onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
             }} placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`} rows={1} />
             <input ref={fileInputRef} className="composer-file-input" type="file" accept={ACCEPTED_FILES} onChange={chooseFile} />
             <div className="composer-toolbar"><span>
@@ -845,26 +745,23 @@ function messageDateLabel(value) {
   });
 }
 
-function MessageBody({ body, mentionedUserIds = [], people = [] }) {
-  const mentionedIds = new Set(mentionedUserIds);
-  const mentions = people.filter((person) => mentionedIds.has(person.id));
-  const parts = splitMessageBody(body, mentions);
+function MessageBody({ body }) {
+  const parts = body.split(/(https?:\/\/[^\s]+)/g);
   return <p>{parts.map((part, index) => {
-    if (part.type === "link") {
+    if (/^https?:\/\//.test(part)) {
       return (
         <a
           className="message-link"
-          href={part.value}
+          href={part}
           target="_blank"
           rel="noopener noreferrer"
-          key={`${part.value}-${index}`}
+          key={`${part}-${index}`}
         >
-          {part.value}
+          {part}
         </a>
       );
     }
-    if (part.type === "mention") return <span className="chat-mention" key={`${part.id}-${index}`}>{part.value}</span>;
-    return <Fragment key={`text-${index}`}>{part.value}</Fragment>;
+    return part;
   })}</p>;
 }
 
