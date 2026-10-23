@@ -1392,13 +1392,20 @@ workspaceRouter.post("/meetings/:eventId/end", async (req, res, next) => {
   try {
     const eventId = z.string().uuid().parse(req.params.eventId);
     const [meeting] = await sql`
-      SELECT id, title, organizer_id, ended_at
+      SELECT id, title, organizer_id, ended_at, meeting_mode
       FROM events
       WHERE id = ${eventId} AND organization_id = ${req.auth.organizationId} AND is_online = TRUE
     `;
     if (!meeting) return res.status(404).json({ error: "Meeting not found" });
-    if (meeting.organizer_id !== req.auth.userId) {
-      return res.status(403).json({ error: "Only the meeting organizer can end the meeting for everyone" });
+
+    const isOrganizer = meeting.organizer_id === req.auth.userId;
+    const isAttendee = (await sql`
+      SELECT 1 FROM event_attendees WHERE event_id = ${eventId} AND user_id = ${req.auth.userId}
+    `).length > 0;
+    const role = await currentRole(req.auth.userId);
+    const canEnd = isOrganizer || isAttendee || ["hr", "senior_leader"].includes(role);
+    if (!canEnd) {
+      return res.status(403).json({ error: "Only participants or organizers can end this call or meeting" });
     }
     if (meeting.ended_at) return res.json({ meeting, message: "This meeting has already ended" });
 
@@ -1410,13 +1417,28 @@ workspaceRouter.post("/meetings/:eventId/end", async (req, res, next) => {
       RETURNING *
     `;
     const room = `meeting:${eventId}`;
+    const isCall = meeting.meeting_mode === "audio" || (meeting.title || "").toLowerCase().includes("call") || (meeting.title || "").includes(" and ");
+    const endTitle = isCall ? "Call ended" : "Meeting ended";
+    const endMessage = isOrganizer
+      ? `${meeting.title} was ended by the organizer.`
+      : `${endTitle}.`;
+
     req.app.get("io")?.to(room).emit("meeting:ended", {
       event_id: eventId,
-      message: `${meeting.title} was ended by the organizer.`
+      message: endMessage,
+      isCall
     });
     req.app.get("io")?.in(room).socketsLeave(room);
+
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("event:ended", {
+      event_id: eventId,
+      ended_at: ended?.ended_at || new Date().toISOString(),
+      title: meeting.title,
+      isCall
+    });
+
     invalidateCache(`events:${req.auth.organizationId}`);
-    res.json({ meeting: ended, message: "Meeting ended for everyone" });
+    res.json({ meeting: ended, message: endTitle });
   } catch (error) { next(error); }
 });
 
