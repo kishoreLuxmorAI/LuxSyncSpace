@@ -14,6 +14,39 @@ const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
 
+function computeOptimisticReactions(currentReactions = [], emoji) {
+  const list = Array.isArray(currentReactions) ? currentReactions.map((r) => ({ ...r })) : [];
+  const myExistingIndex = list.findIndex((r) => r.reacted_by_me);
+
+  if (myExistingIndex !== -1 && list[myExistingIndex].emoji === emoji) {
+    const existing = list[myExistingIndex];
+    if (existing.count <= 1) {
+      list.splice(myExistingIndex, 1);
+    } else {
+      list[myExistingIndex] = { ...existing, count: existing.count - 1, reacted_by_me: false };
+    }
+    return list;
+  }
+
+  if (myExistingIndex !== -1) {
+    const prev = list[myExistingIndex];
+    if (prev.count <= 1) {
+      list.splice(myExistingIndex, 1);
+    } else {
+      list[myExistingIndex] = { ...prev, count: prev.count - 1, reacted_by_me: false };
+    }
+  }
+
+  const targetIndex = list.findIndex((r) => r.emoji === emoji);
+  if (targetIndex !== -1) {
+    list[targetIndex] = { ...list[targetIndex], count: list[targetIndex].count + 1, reacted_by_me: true };
+  } else {
+    list.push({ emoji, count: 1, reacted_by_me: true });
+  }
+
+  return list;
+}
+
 export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
@@ -38,6 +71,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [deleteGroupOpen, setDeleteGroupOpen] = useState(false);
   const [messageMenuId, setMessageMenuId] = useState(null);
   const [reactionMessageId, setReactionMessageId] = useState(null);
+  const [fullPickerMessageId, setFullPickerMessageId] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [forwardingMessage, setForwardingMessage] = useState(null);
@@ -116,6 +150,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     setMoreOpen(false);
     setMessageMenuId(null);
     setReactionMessageId(null);
+    setFullPickerMessageId(null);
     setReplyingTo(null);
     setEditingMessage(null);
     setMentionQuery(null);
@@ -153,7 +188,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
 
       if (
         messageMenuRef.current &&
-        !messageMenuRef.current.contains(target)
+        !messageMenuRef.current.contains(event.target)
       ) {
         setMessageMenuId(null);
       }
@@ -163,6 +198,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         !reactionPickerRef.current.contains(event.target)
       ) {
         setReactionMessageId(null);
+        setFullPickerMessageId(null);
       }
     }
 
@@ -181,7 +217,18 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     socketRef.current = io(SOCKET_URL, socketOptions());
     socketRef.current.on("channel:message", (incoming) => {
       if (selectedChannelRef.current !== incoming.channel_id) return;
-      setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
+      setMessages((current) => {
+        if (current.some((item) => item.id === incoming.id)) return current;
+        if (incoming.sender_id === user.id) {
+          const pendingIdx = current.findIndex((item) => item.pending && item.sender_id === user.id);
+          if (pendingIdx !== -1) {
+            const next = [...current];
+            next[pendingIdx] = incoming;
+            return next;
+          }
+        }
+        return [...current, incoming];
+      });
       if (document.visibilityState === "visible") {
         api(`/channels/${incoming.channel_id}/read`, { method: "POST" })
           .then(() => onConversationRead?.("channel", incoming.channel_id))
@@ -230,7 +277,18 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       const personId = incoming.sender_id === user.id ? incoming.recipient_id : incoming.sender_id;
       updateDirectConversationTime(personId, incoming.sent_at);
       if (selectedPersonRef.current?.id !== personId) return;
-      setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
+      setMessages((current) => {
+        if (current.some((item) => item.id === incoming.id)) return current;
+        if (incoming.sender_id === user.id) {
+          const pendingIdx = current.findIndex((item) => item.pending && item.sender_id === user.id);
+          if (pendingIdx !== -1) {
+            const next = [...current];
+            next[pendingIdx] = incoming;
+            return next;
+          }
+        }
+        return [...current, incoming];
+      });
       if (document.visibilityState === "visible") {
         api(`/direct/${personId}/read`, { method: "POST" })
           .then(() => onConversationRead?.("direct", personId))
@@ -342,7 +400,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   async function send(event) {
     event.preventDefault();
     if ((!message.trim() && !attachment) || (!selected && !selectedPerson)) return;
-    setBusy(true);
     const body = message;
     const selectedAttachment = attachment;
     const selectedReply = replyingTo;
@@ -354,36 +411,80 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     setReplyingTo(null);
     setEditingMessage(null);
     setEmojiOpen(false);
-    try {
-      if (selectedEdit) {
+
+    if (selectedEdit) {
+      const previousMessages = messages;
+      setMessages((current) => current.map((item) =>
+        item.id === selectedEdit.id ? { ...item, body, edited_at: new Date().toISOString() } : item
+      ));
+      try {
         const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${selectedEdit.id}` : `/channels/${selected}/messages/${selectedEdit.id}`;
         const updated = await api(endpoint, { method: "PATCH", body: JSON.stringify({ body }) });
         setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
         onToast("Message edited");
-      } else {
-        const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
-        const sent = await api(endpoint, {
-          method: "POST",
-          body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null, replyTo: selectedReply?.id || null })
-        });
-        if (selectedPerson) updateDirectConversationTime(selectedPerson.id, sent.sent_at);
-        setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
+      } catch (error) {
+        setMessages(previousMessages);
+        setMessage(body);
+        setEditingMessage(selectedEdit);
+        onToast(error.message);
       }
+      return;
+    }
+
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const sentAt = new Date().toISOString();
+    const optimisticMessage = {
+      id: tempId,
+      sender_id: user.id,
+      sender_name: user.full_name || "Team member",
+      initials: user.initials || "U",
+      avatar_color: user.avatar_color || "#3b82f6",
+      body,
+      sent_at: sentAt,
+      attachment_id: selectedAttachment?.id || null,
+      file_name: selectedAttachment?.file_name || null,
+      mime_type: selectedAttachment?.mime_type || null,
+      file_size: selectedAttachment?.file_size || null,
+      reply_to_id: selectedReply?.id || null,
+      reply_body: selectedReply?.body || null,
+      reply_sender_name: selectedReply?.sender_name || null,
+      reply_deleted_at: selectedReply?.deleted_at || null,
+      reactions: [],
+      pending: true,
+      ...(selectedPerson ? { recipient_id: selectedPerson.id } : { channel_id: selected })
+    };
+
+    setMessages((current) => [...current, optimisticMessage]);
+    if (selectedPerson) updateDirectConversationTime(selectedPerson.id, sentAt);
+
+    try {
+      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
+      const sent = await api(endpoint, {
+        method: "POST",
+        body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null, replyTo: selectedReply?.id || null })
+      });
+      if (selectedPerson) updateDirectConversationTime(selectedPerson.id, sent.sent_at);
+      setMessages((current) => {
+        if (current.some((item) => item.id === sent.id)) {
+          return current.filter((item) => item.id !== tempId);
+        }
+        return current.map((item) => item.id === tempId ? sent : item);
+      });
     } catch (error) {
+      setMessages((current) => current.filter((item) => item.id !== tempId));
       setMessage(body);
       setMentionQuery(findMentionQuery(body, body.length));
       setAttachment(selectedAttachment);
       setReplyingTo(selectedReply);
-      setEditingMessage(selectedEdit);
       onToast(error.message);
     }
-    finally { setBusy(false); }
   }
 
   function replyToMessage(item) {
     setReplyingTo(item);
     setMessageMenuId(null);
     setReactionMessageId(null);
+    setFullPickerMessageId(null);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
@@ -394,10 +495,23 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     setReplyingTo(null);
     setMessageMenuId(null);
     setReactionMessageId(null);
+    setFullPickerMessageId(null);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
   async function reactToMessage(item, emoji) {
+    if (!item?.id) return;
+    setReactionMessageId(null);
+    setFullPickerMessageId(null);
+    setMessageMenuId(null);
+
+    const previousReactions = item.reactions || [];
+    const optimisticReactions = computeOptimisticReactions(previousReactions, emoji);
+
+    setMessages((current) => current.map((messageItem) =>
+      messageItem.id === item.id ? { ...messageItem, reactions: optimisticReactions } : messageItem
+    ));
+
     try {
       const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${item.id}/reactions` : `/channels/${selected}/messages/${item.id}/reactions`;
       const result = await api(endpoint, {
@@ -408,33 +522,52 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         ...messageItem,
         reactions: result.reactions
       } : messageItem));
-      setReactionMessageId(null);
-      setMessageMenuId(null);
-    } catch (error) { onToast(error.message); }
+    } catch (error) {
+      setMessages((current) => current.map((messageItem) =>
+        messageItem.id === item.id ? { ...messageItem, reactions: previousReactions } : messageItem
+      ));
+      onToast(error.message);
+    }
   }
 
   async function deleteMessage(item, scope) {
+    if (!item?.id) return;
+    setMessageMenuId(null);
+    setReactionMessageId(null);
+    setFullPickerMessageId(null);
+
+    const previousMessages = messages;
+    const nowIso = new Date().toISOString();
+
+    if (scope === "me") {
+      setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id));
+    } else {
+      setMessages((current) => current.map((messageItem) => {
+        if (messageItem.id === item.id) return {
+          ...messageItem,
+          body: "",
+          attachment_id: null,
+          deleted_at: nowIso,
+          reactions: []
+        };
+        return messageItem.reply_to_id === item.id ? { ...messageItem, reply_deleted_at: nowIso } : messageItem;
+      }));
+    }
+    onToast(scope === "me" ? "Message deleted for you" : "Message deleted for everyone");
+
     try {
       const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${item.id}` : `/channels/${selected}/messages/${item.id}`;
       const result = await api(`${endpoint}?scope=${scope}`, { method: "DELETE" });
-      if (scope === "me") {
-        setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id));
-      } else {
+      if (scope !== "me" && result.deleted_at) {
         setMessages((current) => current.map((messageItem) => {
-          if (messageItem.id === item.id) return {
-            ...messageItem,
-            body: "",
-            attachment_id: null,
-            deleted_at: result.deleted_at,
-            reactions: []
-          };
+          if (messageItem.id === item.id) return { ...messageItem, deleted_at: result.deleted_at };
           return messageItem.reply_to_id === item.id ? { ...messageItem, reply_deleted_at: result.deleted_at } : messageItem;
         }));
       }
-      setMessageMenuId(null);
-      setReactionMessageId(null);
-      onToast(scope === "me" ? "Message deleted for you" : "Message deleted for everyone");
-    } catch (error) { onToast(error.message); }
+    } catch (error) {
+      setMessages(previousMessages);
+      onToast(error.message);
+    }
   }
 
   async function forwardMessage(targetType, targetId) {
@@ -692,9 +825,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
                 {startsNewDay && <div className="date-divider"><span>{messageDateLabel(item.sent_at)}</span></div>}
                 <div className={`chat-message ${grouped ? "grouped" : ""} ${mine ? "mine" : "theirs"}`}>
                   {!grouped && <Avatar person={{ initials: item.initials, avatar_color: item.avatar_color }} />}
-                  <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}{item.edited_at ? " · edited" : ""}</time>{mine && selected && (item.seen_by_all
-                    ? <span className="message-sent-status seen" title="Seen by everyone" aria-label="Seen by everyone"><CheckCheck size={14} strokeWidth={2.5} /></span>
-                    : <span className="message-sent-status" title="Sent" aria-label="Sent"><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
+                  <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}{item.edited_at ? " · edited" : ""}</time>{mine && (selected || selectedPerson) && ((item.seen_by_all || item.read_at)
+                    ? <span className="message-sent-status seen" title="Seen" aria-label="Seen"><CheckCheck size={14} strokeWidth={2.5} /></span>
+                    : <span className="message-sent-status" title={item.pending ? "Sending..." : "Sent"} aria-label={item.pending ? "Sending..." : "Sent"}><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
                     {item.forwarded_from_id && !item.deleted_at && <span className="forwarded-label"><Forward size={12} /> Forwarded</span>}
                     {item.reply_to_id && !item.deleted_at && <div className="message-reply-preview"><b>{item.reply_sender_name || "Message"}</b><span>{item.reply_deleted_at ? "This message was deleted" : item.reply_body}</span></div>}
                     {item.deleted_at ? <p className="deleted-message"><Trash2 size={14} /> This message was deleted</p> : item.body && <MessageBody body={item.body} people={mentionPeople} />}
@@ -705,24 +838,65 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
                       {item.reactions.map((reaction) => <button className={reaction.reacted_by_me ? "mine" : ""} onClick={() => reactToMessage(item, reaction.emoji)} key={reaction.emoji}><span>{reaction.emoji}</span><b>{reaction.count}</b></button>)}
                     </div>}
                   </div>
-                  <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>
+                  {!item.pending && <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); setFullPickerMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>}
                   {messageMenuId === item.id && <div
                     ref={messageMenuRef}
                     className={`message-actions-menu ${mine ? "align-mine" : ""}`}
                   >
-                    {!item.deleted_at && <><button onClick={() => setReactionMessageId(reactionMessageId === item.id ? null : item.id)}><Smile size={16} /> React</button>
+                    {!item.deleted_at && <>
+                      <div className="message-menu-quick-reactions">
+                        {QUICK_REACTIONS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            className="menu-reaction-btn"
+                            onClick={() => reactToMessage(item, emoji)}
+                            title={`React ${emoji}`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                      <button onClick={() => { setReactionMessageId(item.id); setFullPickerMessageId(item.id); setMessageMenuId(null); }}>
+                        <Smile size={16} /> React with emoji...
+                      </button>
                       <button onClick={() => replyToMessage(item)}><Reply size={16} /> Reply</button>
                       <button onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button>
                       {mine && item.body && <button onClick={() => editMessage(item)}><Pencil size={16} /> Edit</button>}</>}
                     <button onClick={() => deleteMessage(item, "me")}><Trash2 size={16} /> Delete for me</button>
                     {mine && !item.deleted_at && <button className="danger-menu-item" onClick={() => deleteMessage(item, "everyone")}><Trash2 size={16} /> Delete for everyone</button>}
                   </div>}
-                  {/* #suraj */}
                   {reactionMessageId === item.id && <div
                     ref={reactionPickerRef}
                     className={`message-reaction-picker ${mine ? "align-mine" : ""}`}
                   >
-                    <Picker data={data} onEmojiSelect={(emoji) => { reactToMessage(item, emoji.native); setReactionMessageId(null); }} theme="light" />                </div>}
+                    <div className="reaction-picker-quick-bar">
+                      {QUICK_REACTIONS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className="reaction-quick-btn"
+                          onClick={() => reactToMessage(item, emoji)}
+                          title={`React ${emoji}`}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="reaction-quick-btn reaction-more-toggle"
+                        onClick={() => setFullPickerMessageId((curr) => curr === item.id ? null : item.id)}
+                        title="More emojis"
+                      >
+                        <Plus size={16} />
+                      </button>
+                    </div>
+                    {fullPickerMessageId === item.id && (
+                      <div className="reaction-full-picker-wrap">
+                        <Picker data={data} onEmojiSelect={(emoji) => reactToMessage(item, emoji.native)} theme="light" />
+                      </div>
+                    )}
+                  </div>}
                 </div>
               </Fragment>;
             })}
