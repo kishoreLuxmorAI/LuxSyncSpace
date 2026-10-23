@@ -14,10 +14,11 @@ const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
 
-export function Chat({ user, channels, people, directUnreadCounts = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
+export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
   const [messages, setMessages] = useState([]);
+  const [latestDirectMessages, setLatestDirectMessages] = useState(directConversationTimes);
   const [message, setMessage] = useState("");
   const [mentionQuery, setMentionQuery] = useState(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -28,6 +29,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [createGroup, setCreateGroup] = useState(false);
   const [manageMembers, setManageMembers] = useState(false);
+  const [membersExpanded, setMembersExpanded] = useState(false);
   const [channelMembers, setChannelMembers] = useState([]);
   const [channelMuted, setChannelMutedState] = useState(() => channels.find((channel) => channel.id === initialChannelId)?.muted || false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
@@ -95,6 +97,11 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const filteredPeople = useMemo(() => people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department} ${person.employee_id}`.toLowerCase().includes(query.toLowerCase())
   ), [people, query]);
+  const orderedDirectPeople = useMemo(() => [...filteredPeople].sort((first, second) => {
+    const firstTime = Date.parse(latestDirectMessages[first.id] || "") || 0;
+    const secondTime = Date.parse(latestDirectMessages[second.id] || "") || 0;
+    return secondTime - firstTime;
+  }), [filteredPeople, latestDirectMessages]);
   const visibleMessages = useMemo(() => {
     const term = messageSearch.trim().toLowerCase();
     if (!term) return messages;
@@ -103,6 +110,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
 
   useEffect(() => {
     setChannelMutedState(channels.find((channel) => channel.id === selected)?.muted || false);
+    setMembersExpanded(false);
     setMessageSearch("");
     setMessageSearchOpen(false);
     setMoreOpen(false);
@@ -113,6 +121,26 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     setMentionQuery(null);
     setMentionIndex(0);
   }, [selected, selectedPerson?.id]);
+
+  useEffect(() => {
+    setLatestDirectMessages((current) => {
+      const updated = { ...current };
+      for (const [personId, sentAt] of Object.entries(directConversationTimes)) {
+        if (!updated[personId] || Date.parse(sentAt) > Date.parse(updated[personId])) {
+          updated[personId] = sentAt;
+        }
+      }
+      return updated;
+    });
+  }, [directConversationTimes]);
+
+  function updateDirectConversationTime(personId, sentAt) {
+    if (!personId || !sentAt) return;
+    setLatestDirectMessages((current) => {
+      if (current[personId] && Date.parse(current[personId]) >= Date.parse(sentAt)) return current;
+      return { ...current, [personId]: sentAt };
+    });
+  }
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -199,11 +227,13 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       }));
     });
     socketRef.current.on("direct:message", (incoming) => {
-      if (selectedPersonRef.current?.id !== incoming.sender_id) return;
+      const personId = incoming.sender_id === user.id ? incoming.recipient_id : incoming.sender_id;
+      updateDirectConversationTime(personId, incoming.sent_at);
+      if (selectedPersonRef.current?.id !== personId) return;
       setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
       if (document.visibilityState === "visible") {
-        api(`/direct/${incoming.sender_id}/read`, { method: "POST" })
-          .then(() => onConversationRead?.("direct", incoming.sender_id))
+        api(`/direct/${personId}/read`, { method: "POST" })
+          .then(() => onConversationRead?.("direct", personId))
           .catch(() => { });
       }
     });
@@ -336,6 +366,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
           method: "POST",
           body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null, replyTo: selectedReply?.id || null })
         });
+        if (selectedPerson) updateDirectConversationTime(selectedPerson.id, sent.sent_at);
         setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
       }
     } catch (error) {
@@ -588,8 +619,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
           </nav>
           <div className="channel-heading"><span>EMPLOYEES</span></div>
           <nav className="direct-list">
-            {filteredPeople.filter((person) => person.id !== user.id).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
-              <button className="direct-person-open" onClick={() => openPerson(person)}><Avatar person={person} size="xs" showPresence /><span className="direct-person-details"><b className="direct-person-name">{person.full_name}</b><small>Employee ID: {employeeIdLabel(person)}</small></span><UnreadBadge count={directUnreadCounts[person.id]} /></button>
+            {orderedDirectPeople.filter((person) => person.id !== user.id).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
+              <button className="direct-person-open" onClick={() => openPerson(person)}><Avatar person={person} size="xs" showPresence /><span className="direct-person-name">{person.full_name}</span><UnreadBadge count={directUnreadCounts[person.id]} /></button>
               <span className="direct-call-actions">
                 <button type="button" onClick={() => onStartCall(person, "audio")} title={`Voice call ${person.full_name}`} aria-label={`Voice call ${person.full_name}`}><Phone size={15} /></button>
                 <button type="button" onClick={() => onStartCall(person, "video")} title={`Video call ${person.full_name}`} aria-label={`Video call ${person.full_name}`}><Video size={15} /></button>
@@ -637,7 +668,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             <div><button className="mobile-conversation-back" onClick={() => closeConversation()} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p>{selectedPerson && <small className="conversation-employee-id">Employee ID: {employeeIdLabel(selectedPerson)}</small>}</span></div>
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
-              {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
+              {selected && <button className="members-button" onClick={() => setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
               {selected && canCreateGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
               {!selectedPerson && <>
                 <button className="icon-button"><Bell size={19} /></button>
@@ -757,12 +788,19 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             </div>}
           </div>
         </div>
-        <button className="details-row" onClick={() => canCreateGroup && setManageMembers(true)}><span><Users size={18} /> Members</span><b>{channelMembers.length}</b><ChevronDown size={16} /></button>
-        <div className="details-members">{channelMembers.slice(0, 6).map((person) => <div key={person.id}><Avatar person={person} size="xs" showPresence /><span><b>{person.full_name}</b><small>{person.title}</small></span></div>)}</div>
+        <button
+          className={`details-row ${membersExpanded ? "expanded" : ""}`}
+          onClick={() => setMembersExpanded((expanded) => !expanded)}
+          aria-expanded={membersExpanded}
+          aria-controls="channel-members-list"
+        ><span><Users size={18} /> Members</span><b>{channelMembers.length}</b><ChevronDown size={16} /></button>
+        {membersExpanded && <div className="details-members" id="channel-members-list" aria-label="Group members">
+          {channelMembers.map((person) => <div key={person.id}><Avatar person={person} size="xs" showPresence /><span><b>{person.full_name}</b><small>{person.title}</small></span></div>)}
+        </div>}
         {canCreateGroup && <button className="button button-secondary manage-members-button" onClick={() => setManageMembers(true)}><UserPlus size={16} /> Manage members</button>}
       </aside>}
       {createGroup && <CreateGroup people={people.filter((person) => person.id !== user.id)} onCreate={submitGroup} onClose={() => setCreateGroup(false)} />}
-      {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
+      {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} canManage={canCreateGroup} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
       {forwardingMessage && <ForwardMessageModal message={forwardingMessage} channels={channels} people={people.filter((person) => person.id !== user.id)} onForward={forwardMessage} onClose={() => setForwardingMessage(null)} />}
       {deleteGroupOpen && activeChannel && <Modal title="Delete group" subtitle={`Permanently remove #${activeChannel.name}`} onClose={() => setDeleteGroupOpen(false)}>
         <div className="delete-confirm"><span><Trash2 size={24} /></span><h3>Delete #{activeChannel.name}?</h3><p>All messages, attachments, and membership records in this group will be permanently deleted. This cannot be recovered.</p><footer><button className="button button-secondary" onClick={() => setDeleteGroupOpen(false)}>Cancel</button><button className="button button-danger" onClick={deleteGroup}><Trash2 size={16} /> Delete group</button></footer></div>

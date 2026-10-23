@@ -94,7 +94,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
   try {
     const { userId, organizationId } = req.auth;
     const viewerRole = await currentRole(userId);
-    const [people, channels, events, announcements, channelUnreadRows, directUnreadRows] = await Promise.all([
+    const [people, channels, events, announcements, channelUnreadRows, directUnreadRows, directConversationRows] = await Promise.all([
       cached(`people:${organizationId}`, 30_000, () => sql`SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
              u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status,
              u.employment_status, u.offboarded_at, u.deleted_at, u.display_name, u.hide_full_name,
@@ -144,7 +144,15 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
       sql`SELECT sender_id, COUNT(*)::int AS unread_count
           FROM direct_messages
           WHERE recipient_id = ${userId} AND read_at IS NULL
-          GROUP BY sender_id`
+          GROUP BY sender_id`,
+      sql`SELECT conversation.user_id, MAX(conversation.sent_at) AS last_message_at
+          FROM (
+            SELECT CASE WHEN sender_id = ${userId} THEN recipient_id ELSE sender_id END AS user_id, sent_at
+            FROM direct_messages
+            WHERE organization_id = ${organizationId}
+              AND (sender_id = ${userId} OR recipient_id = ${userId})
+          ) conversation
+          GROUP BY conversation.user_id`
     ]);
     const channelUnread = new Map(channelUnreadRows.map((row) => [row.channel_id, row.unread_count]));
     const directoryPeople = people
@@ -160,7 +168,8 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
       channels: channels.map((channel) => ({ ...channel, unread_count: channelUnread.get(channel.id) || 0 })),
       events,
       announcements,
-      directUnreadCounts: Object.fromEntries(directUnreadRows.map((row) => [row.sender_id, row.unread_count]))
+      directUnreadCounts: Object.fromEntries(directUnreadRows.map((row) => [row.sender_id, row.unread_count])),
+      directConversationTimes: Object.fromEntries(directConversationRows.map((row) => [row.user_id, row.last_message_at]))
     });
   } catch (error) {
     next(error);
