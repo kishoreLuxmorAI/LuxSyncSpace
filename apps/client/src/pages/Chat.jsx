@@ -47,20 +47,12 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const emojiPickerRef = useRef(null);
   const reactionPickerRef = useRef(null);
   const messageMenuRef = useRef(null);
+  const moreMenuRef = useRef(null);
+  const moreBtnRef = useRef(null);
   const socketRef = useRef();
   const selectedPersonRef = useRef(null);
   const selectedChannelRef = useRef(null);
-  const mentionPeople = useMemo(() => {
-    const candidates = selectedPerson
-      ? people.filter((person) => person.id !== user.id)
-      : channelMembers.filter((person) => person.id !== user.id);
-    return candidates.filter((person) => person.full_name && person.full_name !== "Team member");
-  }, [channelMembers, people, selectedPerson, user.id]);
-  const mentionSuggestions = useMemo(() => {
-    if (!mentionQuery) return [];
-    const term = mentionQuery.query.toLowerCase();
-    return mentionPeople.filter((person) => `${person.full_name} ${person.employee_id || ""}`.toLowerCase().includes(term)).slice(0, 8);
-  }, [mentionPeople, mentionQuery]);
+  const pendingResolutions = useRef(new Map());
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
 
@@ -164,6 +156,14 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       ) {
         setReactionMessageId(null);
       }
+
+      if (
+        moreOpen &&
+        isOutside(moreMenuRef, event) &&
+        isOutside(moreBtnRef, event)
+      ) {
+        setMoreOpen(false);
+      }
     }
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -171,7 +171,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, []);
+  }, [emojiOpen, messageMenuId, reactionMessageId, moreOpen]);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -181,8 +181,22 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     socketRef.current = io(SOCKET_URL, socketOptions());
     socketRef.current.on("channel:message", (incoming) => {
       if (selectedChannelRef.current !== incoming.channel_id) return;
-      setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
-      if (document.visibilityState === "visible") {
+      if (incoming.clientTempId) {
+        pendingResolutions.current.get(incoming.clientTempId)?.resolve(incoming);
+      }
+      setMessages((current) => {
+        if (incoming.clientTempId) {
+          const hasTemp = current.some((item) => item.id === incoming.clientTempId || (item.clientTempId && item.clientTempId === incoming.clientTempId));
+          if (hasTemp) {
+            return current.map((item) => (item.id === incoming.clientTempId || (item.clientTempId && item.clientTempId === incoming.clientTempId)) ? incoming : item);
+          }
+        }
+        if (current.some((item) => item.id === incoming.id)) {
+          return current.map((item) => item.id === incoming.id ? incoming : item);
+        }
+        return [...current, incoming];
+      });
+      if (document.visibilityState === "visible" && incoming.sender_id !== user.id) {
         api(`/channels/${incoming.channel_id}/read`, { method: "POST" })
           .then(() => onConversationRead?.("channel", incoming.channel_id))
           .catch(() => { });
@@ -227,13 +241,26 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       }));
     });
     socketRef.current.on("direct:message", (incoming) => {
-      const personId = incoming.sender_id === user.id ? incoming.recipient_id : incoming.sender_id;
-      updateDirectConversationTime(personId, incoming.sent_at);
-      if (selectedPersonRef.current?.id !== personId) return;
-      setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
-      if (document.visibilityState === "visible") {
-        api(`/direct/${personId}/read`, { method: "POST" })
-          .then(() => onConversationRead?.("direct", personId))
+      const otherUserId = incoming.sender_id === user.id ? incoming.recipient_id : incoming.sender_id;
+      if (selectedPersonRef.current?.id !== otherUserId) return;
+      if (incoming.clientTempId) {
+        pendingResolutions.current.get(incoming.clientTempId)?.resolve(incoming);
+      }
+      setMessages((current) => {
+        if (incoming.clientTempId) {
+          const hasTemp = current.some((item) => item.id === incoming.clientTempId || (item.clientTempId && item.clientTempId === incoming.clientTempId));
+          if (hasTemp) {
+            return current.map((item) => (item.id === incoming.clientTempId || (item.clientTempId && item.clientTempId === incoming.clientTempId)) ? incoming : item);
+          }
+        }
+        if (current.some((item) => item.id === incoming.id)) {
+          return current.map((item) => item.id === incoming.id ? incoming : item);
+        }
+        return [...current, incoming];
+      });
+      if (document.visibilityState === "visible" && incoming.sender_id !== user.id) {
+        api(`/direct/${incoming.sender_id}/read`, { method: "POST" })
+          .then(() => onConversationRead?.("direct", incoming.sender_id))
           .catch(() => { });
       }
     });
@@ -333,16 +360,40 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     if (!selectedPerson) return;
     setMessages([]);
     api(`/direct/${selectedPerson.id}`).then(({ messages }) => { setMessages(messages); onConversationRead?.("direct", selectedPerson.id); }).catch((error) => onToast(error.message));
-  }, [selectedPerson]);
+  }, [selectedPerson?.id]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "auto" });
   }, [messages]);
 
+  function computeOptimisticReactions(reactions = [], emoji) {
+    const list = (reactions || []).map((r) => ({ ...r }));
+    const previousReaction = list.find((r) => r.reacted_by_me);
+    const isUntoggling = previousReaction && previousReaction.emoji === emoji;
+
+    if (isUntoggling) {
+      return list
+        .map((r) => (r.emoji === emoji ? { ...r, count: r.count - 1, reacted_by_me: false } : r))
+        .filter((r) => r.count > 0);
+    }
+
+    let updated = list;
+    if (previousReaction) {
+      updated = updated
+        .map((r) => (r.emoji === previousReaction.emoji ? { ...r, count: r.count - 1, reacted_by_me: false } : r))
+        .filter((r) => r.count > 0);
+    }
+
+    const existingTarget = updated.find((r) => r.emoji === emoji);
+    if (existingTarget) {
+      return updated.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, reacted_by_me: true } : r));
+    }
+    return [...updated, { emoji, count: 1, reacted_by_me: true }];
+  }
+
   async function send(event) {
     event.preventDefault();
     if ((!message.trim() && !attachment) || (!selected && !selectedPerson)) return;
-    setBusy(true);
     const body = message;
     const selectedAttachment = attachment;
     const selectedReply = replyingTo;
@@ -354,30 +405,96 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     setReplyingTo(null);
     setEditingMessage(null);
     setEmojiOpen(false);
-    try {
-      if (selectedEdit) {
+
+    if (selectedEdit) {
+      const editedAt = new Date().toISOString();
+      setMessages((current) => current.map((item) => item.id === selectedEdit.id ? { ...item, body, edited_at: editedAt } : item));
+      try {
         const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${selectedEdit.id}` : `/channels/${selected}/messages/${selectedEdit.id}`;
         const updated = await api(endpoint, { method: "PATCH", body: JSON.stringify({ body }) });
         setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
         onToast("Message edited");
-      } else {
-        const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
-        const sent = await api(endpoint, {
-          method: "POST",
-          body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null, replyTo: selectedReply?.id || null })
-        });
-        if (selectedPerson) updateDirectConversationTime(selectedPerson.id, sent.sent_at);
-        setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
+      } catch (error) {
+        setMessages((current) => current.map((item) => item.id === selectedEdit.id ? selectedEdit : item));
+        setMessage(body);
+        setEditingMessage(selectedEdit);
+        onToast(error.message);
       }
+      return;
+    }
+
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    let resolvePending;
+    const pendingPromise = new Promise((resolve) => {
+      resolvePending = resolve;
+    });
+    pendingResolutions.current.set(tempId, { promise: pendingPromise, resolve: resolvePending });
+
+    const senderName = user.hide_full_name
+      ? (user.display_name?.trim() || "Team member")
+      : (user.full_name || user.display_name || "Team member");
+
+    const optimisticMessage = {
+      id: tempId,
+      clientTempId: tempId,
+      body,
+      sent_at: new Date().toISOString(),
+      attachment_id: selectedAttachment?.id || null,
+      file_name: selectedAttachment?.file_name || null,
+      file_size: selectedAttachment?.file_size || null,
+      mime_type: selectedAttachment?.mime_type || null,
+      reply_to_id: selectedReply?.id || null,
+      reply_body: selectedReply?.body || null,
+      reply_deleted_at: selectedReply?.deleted_at || null,
+      reply_sender_name: selectedReply?.sender_name || null,
+      sender_id: user.id,
+      sender_name: senderName,
+      initials: user.initials,
+      avatar_color: user.avatar_color,
+      title: user.title,
+      reactions: [],
+      seen_by_all: false,
+      channel_id: selected || null,
+      recipient_id: selectedPerson?.id || null
+    };
+
+    setMessages((current) => [...current, optimisticMessage]);
+
+    try {
+      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
+      const sent = await api(endpoint, {
+        method: "POST",
+        body: JSON.stringify({
+          body,
+          attachmentId: selectedAttachment?.id || null,
+          replyTo: selectedReply?.id || null,
+          clientTempId: tempId
+        })
+      });
+      const pending = pendingResolutions.current.get(tempId);
+      if (pending) {
+        pending.resolve(sent);
+      }
+      setMessages((current) => {
+        const hasTemp = current.some((item) => item.id === tempId || (item.clientTempId && item.clientTempId === tempId));
+        if (hasTemp) {
+          return current.map((item) => (item.id === tempId || (item.clientTempId && item.clientTempId === tempId)) ? { ...sent, clientTempId: tempId } : item);
+        }
+        return current.some((item) => item.id === sent.id) ? current : [...current, sent];
+      });
     } catch (error) {
+      const pending = pendingResolutions.current.get(tempId);
+      if (pending) {
+        pending.resolve(null);
+        pendingResolutions.current.delete(tempId);
+      }
+      setMessages((current) => current.filter((item) => item.id !== tempId && item.clientTempId !== tempId));
       setMessage(body);
       setMentionQuery(findMentionQuery(body, body.length));
       setAttachment(selectedAttachment);
       setReplyingTo(selectedReply);
-      setEditingMessage(selectedEdit);
       onToast(error.message);
     }
-    finally { setBusy(false); }
   }
 
   function replyToMessage(item) {
@@ -398,43 +515,101 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }
 
   async function reactToMessage(item, emoji) {
+    setReactionMessageId(null);
+    setMessageMenuId(null);
+
+    const previousReactions = item.reactions || [];
+    const optimisticReactions = computeOptimisticReactions(previousReactions, emoji);
+
+    setMessages((current) => current.map((messageItem) =>
+      (messageItem.id === item.id || (item.clientTempId && messageItem.clientTempId === item.clientTempId))
+        ? { ...messageItem, reactions: optimisticReactions }
+        : messageItem
+    ));
+
     try {
-      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${item.id}/reactions` : `/channels/${selected}/messages/${item.id}/reactions`;
+      let targetId = item.id;
+      if (String(item.id).startsWith("temp-")) {
+        const pending = pendingResolutions.current.get(item.id);
+        if (pending) {
+          const resolved = await pending.promise;
+          if (!resolved?.id) return;
+          targetId = resolved.id;
+        }
+      }
+
+      const endpoint = selectedPerson
+        ? `/direct/${selectedPerson.id}/messages/${targetId}/reactions`
+        : `/channels/${selected}/messages/${targetId}/reactions`;
       const result = await api(endpoint, {
         method: "POST",
         body: JSON.stringify({ emoji })
       });
-      setMessages((current) => current.map((messageItem) => messageItem.id === item.id ? {
-        ...messageItem,
-        reactions: result.reactions
-      } : messageItem));
-      setReactionMessageId(null);
-      setMessageMenuId(null);
-    } catch (error) { onToast(error.message); }
+      setMessages((current) => current.map((messageItem) =>
+        (messageItem.id === targetId || messageItem.id === item.id)
+          ? { ...messageItem, reactions: result.reactions }
+          : messageItem
+      ));
+    } catch (error) {
+      setMessages((current) => current.map((messageItem) =>
+        (messageItem.id === item.id || (item.clientTempId && messageItem.clientTempId === item.clientTempId))
+          ? { ...messageItem, reactions: previousReactions }
+          : messageItem
+      ));
+      onToast(error.message);
+    }
   }
 
   async function deleteMessage(item, scope) {
-    try {
-      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${item.id}` : `/channels/${selected}/messages/${item.id}`;
-      const result = await api(`${endpoint}?scope=${scope}`, { method: "DELETE" });
-      if (scope === "me") {
-        setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id));
-      } else {
-        setMessages((current) => current.map((messageItem) => {
-          if (messageItem.id === item.id) return {
+    setMessageMenuId(null);
+    setReactionMessageId(null);
+
+    const previousMessages = [...messages];
+    const deletedAt = new Date().toISOString();
+
+    if (scope === "me") {
+      setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id && (!item.clientTempId || messageItem.clientTempId !== item.clientTempId)));
+    } else {
+      setMessages((current) => current.map((messageItem) => {
+        if (messageItem.id === item.id || (item.clientTempId && messageItem.clientTempId === item.clientTempId)) {
+          return {
             ...messageItem,
             body: "",
             attachment_id: null,
-            deleted_at: result.deleted_at,
+            deleted_at: deletedAt,
             reactions: []
           };
-          return messageItem.reply_to_id === item.id ? { ...messageItem, reply_deleted_at: result.deleted_at } : messageItem;
+        }
+        return messageItem.reply_to_id === item.id ? { ...messageItem, reply_deleted_at: deletedAt } : messageItem;
+      }));
+    }
+
+    try {
+      let targetId = item.id;
+      if (String(item.id).startsWith("temp-")) {
+        const pending = pendingResolutions.current.get(item.id);
+        if (pending) {
+          const resolved = await pending.promise;
+          if (!resolved?.id) return;
+          targetId = resolved.id;
+        }
+      }
+
+      const endpoint = selectedPerson
+        ? `/direct/${selectedPerson.id}/messages/${targetId}`
+        : `/channels/${selected}/messages/${targetId}`;
+      const result = await api(`${endpoint}?scope=${scope}`, { method: "DELETE" });
+      if (scope === "everyone" && result.deleted_at) {
+        setMessages((current) => current.map((messageItem) => {
+          if (messageItem.id === targetId || messageItem.id === item.id) return { ...messageItem, deleted_at: result.deleted_at };
+          return messageItem.reply_to_id === targetId ? { ...messageItem, reply_deleted_at: result.deleted_at } : messageItem;
         }));
       }
-      setMessageMenuId(null);
-      setReactionMessageId(null);
       onToast(scope === "me" ? "Message deleted for you" : "Message deleted for everyone");
-    } catch (error) { onToast(error.message); }
+    } catch (error) {
+      setMessages(previousMessages);
+      onToast(error.message);
+    }
   }
 
   async function forwardMessage(targetType, targetId) {
@@ -733,32 +908,25 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
             {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
             {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
-            {mentionSuggestions.length > 0 && <div className="mention-suggestions" role="listbox" aria-label="Mention employees">
-              {mentionSuggestions.map((person, index) => <button type="button" role="option" aria-selected={index === mentionIndex} className={index === mentionIndex ? "active" : ""} key={person.id}
-                onMouseDown={(event) => event.preventDefault()} onClick={() => selectMention(person)}>
-                <Avatar person={person} size="xs" /><span><b>{person.full_name}</b></span>
-              </button>)}
-            </div>}
-            <textarea ref={textareaRef} value={message} onChange={updateMessage} onPaste={pasteImage} onKeyDown={(event) => {
-              if (mentionSuggestions.length && event.key === "ArrowDown") {
-                event.preventDefault();
-                setMentionIndex((index) => (index + 1) % mentionSuggestions.length);
-              } else if (mentionSuggestions.length && event.key === "ArrowUp") {
-                event.preventDefault();
-                setMentionIndex((index) => (index - 1 + mentionSuggestions.length) % mentionSuggestions.length);
-              } else if (mentionSuggestions.length && (event.key === "Enter" || event.key === "Tab")) {
-                event.preventDefault();
-                selectMention(mentionSuggestions[mentionIndex]);
-              } else if (mentionQuery && event.key === "Escape") {
-                event.preventDefault();
-                setMentionQuery(null);
-              } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
-            }} placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`} rows={1} />
+            <textarea
+              ref={textareaRef}
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              onPaste={pasteImage}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form.requestSubmit();
+                }
+              }}
+              placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`}
+              rows={1}
+            />
             <input ref={fileInputRef} className="composer-file-input" type="file" accept={ACCEPTED_FILES} onChange={chooseFile} />
             <div className="composer-toolbar"><span>
               <button type="button" className={uploading ? "tool-busy" : ""} onClick={() => fileInputRef.current?.click()} disabled={uploading} title="Attach a file"><Paperclip size={18} /></button>
-              <button type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
-            </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
+              <button ref={emojiBtnRef} type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
+            </span><button className="send-button" disabled={(!message.trim() && !attachment) || uploading}><Send size={17} /></button></div>
             {emojiOpen &&
               <div
                 ref={emojiPickerRef}
