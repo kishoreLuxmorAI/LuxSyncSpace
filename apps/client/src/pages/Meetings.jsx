@@ -24,6 +24,12 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
     }
   }
 
+  function openCancelDialog(event) {
+    setCancelTarget(event);
+    const dialog = cancelDialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }
+
   return (
     <div className="meetings-page page-pad">
       <header className="page-header meeting-page-header">
@@ -47,7 +53,7 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
             return <article className={cancelled ? "cancelled" : ended ? "ended" : ""} key={event.id}>
               <div className="meeting-date"><b>{format(new Date(event.starts_at), "d")}</b><small>{format(new Date(event.starts_at), "MMM")}</small></div>
               <div className="meeting-list-main">{cancelled ? <span className="meeting-cancelled-chip"><Ban size={13} /> Cancelled</span> : ended ? <span className="meeting-ended-chip"><PhoneOff size={13} /> {endedLabel}</span> : <span className="meeting-mode-chip">{event.meeting_mode === "audio" ? <Mic size={13} /> : <Video size={13} />} {event.meeting_mode === "audio" ? "Voice" : "Video"}</span>}<h3>{event.title}</h3><p><Clock size={14} /> {format(new Date(event.starts_at), "EEE, MMM d · h:mm a")} – {format(new Date(event.ends_at), "h:mm a")}</p>{cancelled && event.cancellation_reason && <p className="cancellation-reason">Reason: {event.cancellation_reason}</p>}<button type="button" className="attendee-stack" onClick={() => setPeopleTarget(event)} aria-label={`View ${event.attendees?.length || 0} invited people`}>{event.attendees?.slice(0, 5).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color, full_name: person.name }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} invited · View people</small></button></div>
-              <div className="meeting-list-actions">{!cancelled && !ended && <><button className="button button-secondary button-small" onClick={() => copyLink(event)}><Copy size={14} /> Copy link</button><button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}>{event.meeting_mode === "audio" ? <Mic size={14} /> : <Video size={14} />} Join</button></>}{ended && <span className="meeting-status-badge ended"><PhoneOff size={14} /> {endedLabel}</span>}{canCancel && <button className="button button-danger button-small" onClick={() => setCancelTarget(event)}><Ban size={14} /> Cancel</button>}</div>
+              <div className="meeting-list-actions">{!cancelled && !ended && <><button className="button button-secondary button-small" onClick={() => copyLink(event)}><Copy size={14} /> Copy link</button><button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}>{event.meeting_mode === "audio" ? <Mic size={14} /> : <Video size={14} />} Join</button></>}{ended && <span className="meeting-status-badge ended"><PhoneOff size={14} /> {endedLabel}</span>}{canCancel && <button type="button" className="button button-danger button-small" onClick={() => openCancelDialog(event)}><Ban size={14} /> Cancel</button>}</div>
             </article>;
           })}
           {!scheduled.length && <div className="empty-state"><CalendarClock size={30} /><h3>No scheduled meetings</h3><p>Schedule a meeting or start an instant room.</p></div>}
