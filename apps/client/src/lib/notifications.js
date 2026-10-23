@@ -35,7 +35,9 @@ export function notificationsEnabled() {
 export async function enableNotifications() {
   if (!notificationsSupported()) throw new Error("Notifications are not supported in this browser");
   if (!("PushManager" in window)) throw new Error("Push notifications are not supported in this browser");
-  const permission = await Notification.requestPermission();
+  const permission = Notification.permission === "denied"
+    ? "denied"
+    : await Notification.requestPermission();
   if (permission !== "granted") {
     throw new Error(permission === "denied"
       ? "Notifications are blocked for this site. Allow them in your browser's site settings, then try again."
@@ -191,11 +193,14 @@ export async function playNotificationSound(sound = "message") {
 }
 
 let activeRingtone = null;
+let ringtoneGeneration = 0;
 
 export async function startIncomingCallRingtone() {
   stopIncomingCallRingtone();
+  const generation = ringtoneGeneration;
   const context = getAudioContext();
   if (!context || !(await primeNotificationAudio())) return;
+  if (generation !== ringtoneGeneration) return;
   const master = context.createGain();
   master.gain.value = 0.22;
   master.connect(context.destination);
@@ -225,6 +230,7 @@ export async function startIncomingCallRingtone() {
 }
 
 export function stopIncomingCallRingtone() {
+  ringtoneGeneration += 1;
   if (!activeRingtone) {
     navigator.vibrate?.(0);
     return;

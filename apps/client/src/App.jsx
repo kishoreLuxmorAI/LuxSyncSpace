@@ -35,7 +35,49 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [incomingCall, setIncomingCall] = useState(null);
   const [notification, setNotification] = useState(null);
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState(() => {
+    try {
+      const saved = localStorage.getItem("luxsyncspace_notifications");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("luxsyncspace_notifications", JSON.stringify(notifications));
+    } catch {}
+  }, [notifications]);
+
+  const populateInitialNotifications = useCallback((workspace) => {
+    setNotifications((current) => {
+      if (current.length) return current;
+      const initial = (workspace?.announcements || []).map((a) => ({
+        id: `announcement-${a.id}`,
+        title: `Announcement: ${a.title}`,
+        body: a.body,
+        tag: `announcement-${a.id}`,
+        sound: "message",
+        view: "home",
+        receivedAt: a.published_at || new Date().toISOString(),
+        unread: true
+      }));
+      if (!initial.length) {
+        initial.push({
+          id: "welcome-luxsyncspace",
+          title: "Welcome to LuxSyncspace",
+          body: "Your unified workspace for team chat, meetings, and updates.",
+          tag: "welcome",
+          sound: "message",
+          view: "home",
+          receivedAt: new Date().toISOString(),
+          unread: true
+        });
+      }
+      return initial;
+    });
+  }, []);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [chatParams, setChatParams] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -55,12 +97,13 @@ export default function App() {
       setTutorialOpen(!me.user.must_change_password && !me.user.onboarding_completed_at);
       const workspace = await api("/bootstrap");
       setData(workspace);
+      populateInitialNotifications(workspace);
     } catch (error) {
       if (authStore.get()) setSessionError(error.message || "Unable to restore your session");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [populateInitialNotifications]);
 
   const navigate = useCallback((view, { replace = false, channel, direct } = {}) => {
     const next = view || "home";
@@ -140,14 +183,38 @@ export default function App() {
   }, [notification]);
 
   function receiveNotification(item) {
-    const notificationItem = { ...item, receivedAt: new Date().toISOString(), unread: true };
+    const notificationItem = {
+      id: item.id || crypto.randomUUID(),
+      ...item,
+      receivedAt: item.receivedAt || new Date().toISOString(),
+      unread: true
+    };
     setNotification(notificationItem);
-    setNotifications((current) => [notificationItem, ...current.filter((entry) => entry.tag !== item.tag)].slice(0, 30));
+    setNotifications((current) => [
+      notificationItem,
+      ...current.filter((entry) => (item.tag ? entry.tag !== item.tag : entry.id !== notificationItem.id))
+    ].slice(0, 30));
+  }
+
+  function markNotificationRead(item) {
+    const targetId = typeof item === "object" ? item.id : item;
+    const targetTag = typeof item === "object" ? item.tag : null;
+    setNotifications((current) =>
+      current.map((entry) =>
+        entry.id === targetId || (targetTag && entry.tag === targetTag)
+          ? { ...entry, unread: false }
+          : entry
+      )
+    );
+  }
+
+  function markAllNotificationsRead() {
+    setNotifications((current) => current.map((entry) => ({ ...entry, unread: false })));
   }
 
   function openNotification(item) {
     setNotification(null);
-    setNotifications((current) => current.map((entry) => entry.id === item.id ? { ...entry, unread: false } : entry));
+    markNotificationRead(item);
     navigate(item.view || "home");
   }
 
@@ -178,6 +245,7 @@ export default function App() {
     const workspace = await api("/bootstrap");
     setUser(result.user);
     setData(workspace);
+    populateInitialNotifications(workspace);
     setTutorialOpen(!result.user.must_change_password && !result.user.onboarding_completed_at);
   }
 
@@ -372,7 +440,22 @@ export default function App() {
     const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
     return <>
       <MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onEndMeeting={endMeetingForEveryone} onToast={setToast} />
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
+      <NotificationBridge
+        user={user}
+        channels={data.channels}
+        onRefresh={refreshWorkspace}
+        onIncomingCall={setIncomingCall}
+        onNotification={receiveNotification}
+        onChatMessage={receiveChatMessage}
+        onPresenceUpdate={updatePresence}
+        onMeetingEnded={(endedEvent) => {
+          if (endedEvent?.event_id === meetingId) {
+            const isCall = Boolean(endedEvent?.isCall || meeting.title?.includes(" and ") || (meeting.title || "").toLowerCase().includes("call"));
+            setToast(isCall ? "Call ended." : "Meeting ended.");
+            leaveMeeting();
+          }
+        }}
+      />
       <InAppNotification notification={notification} onOpen={() => setNotification(null)} onClose={() => setNotification(null)} />
       <Toast message={toast} onClose={() => setToast("")} />
     </>;
@@ -381,9 +464,9 @@ export default function App() {
   const pageProps = { user, data, navigate, onNewEvent: (initial) => setNewEvent(initial || true), onRefresh: refreshWorkspace, onToast: setToast, onJoinMeeting: joinMeeting, onStartMeeting: startInstantMeeting };
   return (
     <>
-      <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={() => setNotifications((current) => current.map((item) => ({ ...item, unread: false })))} onNotificationOpen={openNotification}>
+      <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={markAllNotificationsRead} onNotificationRead={markNotificationRead} onNotificationOpen={openNotification}>
         {active === "home" && <Home {...pageProps} />}
-        {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={chatParams.channel} initialPersonId={chatParams.direct} onStartCall={startCall} />}
+        {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} directConversationTimes={data.directConversationTimes || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={chatParams.channel} initialPersonId={chatParams.direct} onStartCall={startCall} />}
         {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={(initial) => setNewEvent(initial || true)} onCancelEvent={cancelEvent} onAddAttendees={addMeetingAttendees} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={(initial) => setNewEvent(initial || true)} onJoinMeeting={joinMeeting} />}
         {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={(person) => navigate("chat", person ? { direct: person.id } : {})} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
