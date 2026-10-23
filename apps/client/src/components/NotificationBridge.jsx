@@ -41,8 +41,9 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
       if (/^(Voice|Video) call:/.test(message.body || "")) return;
       if (/^Meeting cancelled:/.test(message.body || "")) return;
       const isMeetingInvitation = /^Meeting invitation:/.test(message.body || "");
+      const mentioned = message.mentioned_user_ids?.includes(user.id);
       notify(
-        isMeetingInvitation ? `Meeting invitation from ${message.sender_name}` : `Message from ${message.sender_name}`,
+        isMeetingInvitation ? `Meeting invitation from ${message.sender_name}` : mentioned ? `${message.sender_name} mentioned you` : `Message from ${message.sender_name}`,
         message.body || `Shared ${message.file_name || "a file"}`,
         `direct-${message.sender_id}`,
         isMeetingInvitation ? "meeting" : "message",
@@ -53,8 +54,15 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
       if (message.sender_id === user.id) return;
       callbacksRef.current.onChatMessage?.("channel", message.channel_id);
       const channel = channelsRef.current.find((item) => item.id === message.channel_id);
-      if (channel?.muted) return;
-      notify(`${message.sender_name} in #${channel?.name || "group"}`, message.body || `Shared ${message.file_name || "a file"}`, `channel-${message.channel_id}`, "message", "chat");
+      const mentioned = message.mentioned_user_ids?.includes(user.id);
+      if (channel?.muted && !mentioned) return;
+      notify(
+        mentioned ? `${message.sender_name} mentioned you in #${channel?.name || "group"}` : `${message.sender_name} in #${channel?.name || "group"}`,
+        message.body || `Shared ${message.file_name || "a file"}`,
+        `channel-${message.channel_id}`,
+        "message",
+        "chat"
+      );
     });
     socket.on("announcement:new", (announcement) => {
       notify(`Company announcement: ${announcement.title}`, announcement.body, `announcement-${announcement.id}`);
