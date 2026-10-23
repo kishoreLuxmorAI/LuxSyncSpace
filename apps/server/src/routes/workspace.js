@@ -1078,7 +1078,9 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       WHERE original.id = ${message.reply_to_id}
     ` : [null];
     const result = { ...message, ...sender, ...attachment, ...reply, mentioned_user_ids: mentionedUserIds, reactions: [] };
-    req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", { ...result, recipient_id: req.params.userId });
+    const payload = { ...result, recipient_id: req.params.userId };
+    req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", payload);
+    req.app.get("io")?.to(`user:${req.auth.userId}`).emit("direct:message", payload);
     sendPushToUser(req.params.userId, {
       title: mentionedUserIds.includes(req.params.userId) ? `${sender.sender_name} mentioned you` : sender.sender_name,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
