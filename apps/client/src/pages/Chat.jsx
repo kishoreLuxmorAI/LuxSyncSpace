@@ -14,10 +14,11 @@ const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
 
-export function Chat({ user, channels, people, directUnreadCounts = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
+export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
   const [messages, setMessages] = useState([]);
+  const [latestDirectMessages, setLatestDirectMessages] = useState(directConversationTimes);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -83,6 +84,11 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const filteredPeople = useMemo(() => people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department} ${person.employee_id}`.toLowerCase().includes(query.toLowerCase())
   ), [people, query]);
+  const orderedDirectPeople = useMemo(() => [...filteredPeople].sort((first, second) => {
+    const firstTime = Date.parse(latestDirectMessages[first.id] || "") || 0;
+    const secondTime = Date.parse(latestDirectMessages[second.id] || "") || 0;
+    return secondTime - firstTime;
+  }), [filteredPeople, latestDirectMessages]);
   const visibleMessages = useMemo(() => {
     const term = messageSearch.trim().toLowerCase();
     if (!term) return messages;
@@ -100,6 +106,26 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     setReplyingTo(null);
     setEditingMessage(null);
   }, [selected, selectedPerson?.id]);
+
+  useEffect(() => {
+    setLatestDirectMessages((current) => {
+      const updated = { ...current };
+      for (const [personId, sentAt] of Object.entries(directConversationTimes)) {
+        if (!updated[personId] || Date.parse(sentAt) > Date.parse(updated[personId])) {
+          updated[personId] = sentAt;
+        }
+      }
+      return updated;
+    });
+  }, [directConversationTimes]);
+
+  function updateDirectConversationTime(personId, sentAt) {
+    if (!personId || !sentAt) return;
+    setLatestDirectMessages((current) => {
+      if (current[personId] && Date.parse(current[personId]) >= Date.parse(sentAt)) return current;
+      return { ...current, [personId]: sentAt };
+    });
+  }
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -186,11 +212,13 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       }));
     });
     socketRef.current.on("direct:message", (incoming) => {
-      if (selectedPersonRef.current?.id !== incoming.sender_id) return;
+      const personId = incoming.sender_id === user.id ? incoming.recipient_id : incoming.sender_id;
+      updateDirectConversationTime(personId, incoming.sent_at);
+      if (selectedPersonRef.current?.id !== personId) return;
       setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
       if (document.visibilityState === "visible") {
-        api(`/direct/${incoming.sender_id}/read`, { method: "POST" })
-          .then(() => onConversationRead?.("direct", incoming.sender_id))
+        api(`/direct/${personId}/read`, { method: "POST" })
+          .then(() => onConversationRead?.("direct", personId))
           .catch(() => { });
       }
     });
@@ -320,6 +348,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
           method: "POST",
           body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null, replyTo: selectedReply?.id || null })
         });
+        if (selectedPerson) updateDirectConversationTime(selectedPerson.id, sent.sent_at);
         setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
       }
     } catch (error) {
@@ -548,7 +577,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
           </nav>
           <div className="channel-heading"><span>EMPLOYEES</span></div>
           <nav className="direct-list">
-            {filteredPeople.filter((person) => person.id !== user.id).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
+            {orderedDirectPeople.filter((person) => person.id !== user.id).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
               <button className="direct-person-open" onClick={() => openPerson(person)}><Avatar person={person} size="xs" showPresence /><span className="direct-person-name">{person.full_name}</span><UnreadBadge count={directUnreadCounts[person.id]} /></button>
               <span className="direct-call-actions">
                 <button type="button" onClick={() => onStartCall(person, "audio")} title={`Voice call ${person.full_name}`} aria-label={`Voice call ${person.full_name}`}><Phone size={15} /></button>
