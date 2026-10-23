@@ -31,6 +31,14 @@ const attachmentUpload = multer({
   )
 });
 
+function findMentionedUserIds(body, users, senderId) {
+  return users.filter((person) => {
+    if (person.id === senderId || !person.full_name || person.full_name === "Team member") return false;
+    const escapedName = person.full_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[\\s([{])@${escapedName}(?=$|[^\\p{L}\\p{N}_'’\\-])`, "iu").test(body);
+  }).map((person) => person.id);
+}
+
 workspaceRouter.post("/attachments", (req, res, next) => {
   attachmentUpload.single("file")(req, res, async (uploadError) => {
     if (uploadError) {
@@ -87,9 +95,9 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
   try {
     const { userId, organizationId } = req.auth;
     const viewerRole = await currentRole(userId);
-    const [people, channels, events, announcements, channelUnreadRows, directUnreadRows] = await Promise.all([
-      cached(`people:${organizationId}`, 5_000, () => sql`SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
-             u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status, u.last_active_at,
+    const [people, channels, events, announcements, channelUnreadRows, directUnreadRows, directConversationRows] = await Promise.all([
+      cached(`people:${organizationId}`, 30_000, () => sql`SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
+             u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status,
              u.employment_status, u.offboarded_at, u.deleted_at, u.display_name, u.hide_full_name,
              u.hide_email, u.onboarding_completed_at,
              CASE WHEN m.hide_full_name THEN COALESCE(NULLIF(m.display_name, ''), 'Team member') ELSE m.full_name END AS manager_name
@@ -137,7 +145,15 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
       sql`SELECT sender_id, COUNT(*)::int AS unread_count
           FROM direct_messages
           WHERE recipient_id = ${userId} AND read_at IS NULL
-          GROUP BY sender_id`
+          GROUP BY sender_id`,
+      sql`SELECT conversation.user_id, MAX(conversation.sent_at) AS last_message_at
+          FROM (
+            SELECT CASE WHEN sender_id = ${userId} THEN recipient_id ELSE sender_id END AS user_id, sent_at
+            FROM direct_messages
+            WHERE organization_id = ${organizationId}
+              AND (sender_id = ${userId} OR recipient_id = ${userId})
+          ) conversation
+          GROUP BY conversation.user_id`
     ]);
     const channelUnread = new Map(channelUnreadRows.map((row) => [row.channel_id, row.unread_count]));
 
@@ -164,7 +180,8 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
       channels: channels.map((channel) => ({ ...channel, unread_count: channelUnread.get(channel.id) || 0 })),
       events,
       announcements,
-      directUnreadCounts: Object.fromEntries(directUnreadRows.map((row) => [row.sender_id, row.unread_count]))
+      directUnreadCounts: Object.fromEntries(directUnreadRows.map((row) => [row.sender_id, row.unread_count])),
+      directConversationTimes: Object.fromEntries(directConversationRows.map((row) => [row.user_id, row.last_message_at]))
     });
   } catch (error) {
     next(error);
@@ -787,6 +804,12 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
     }).refine((value) => value.body || value.attachmentId || value.forwardedFrom, { message: "Enter a message or attach a file" }).parse(req.body);
     const [membership] = await sql`SELECT 1 FROM channel_members WHERE channel_id = ${req.params.id} AND user_id = ${req.auth.userId}`;
     if (!membership) return res.status(403).json({ error: "You are not a member of this channel" });
+    const mentionCandidates = await sql`
+      SELECT u.id, CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS full_name
+      FROM channel_members cm JOIN users u ON u.id = cm.user_id
+      WHERE cm.channel_id = ${req.params.id}
+    `;
+    const mentionedUserIds = findMentionedUserIds(input.body, mentionCandidates, req.auth.userId);
     const [message] = await sql`
       INSERT INTO channel_messages (channel_id, sender_id, body, attachment_id, reply_to_id, forwarded_from_id)
       SELECT ${req.params.id}, ${req.auth.userId}, ${input.body},
@@ -833,6 +856,7 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       ...reply,
       channel_id: req.params.id,
       seen_by_all: !unreadMember,
+      mentioned_user_ids: mentionedUserIds,
       reactions: []
     };
     req.app.get("io")?.to(`channel:${req.params.id}`).emit("channel:message", result);
@@ -842,7 +866,15 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `channel-${req.params.id}`,
       url: "/"
-    }).catch(console.error);
+    }, mentionedUserIds).catch(console.error);
+    for (const userId of mentionedUserIds) {
+      sendPushToUser(userId, {
+        title: `${sender.sender_name} mentioned you in #${channel?.name || "group"}`,
+        body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
+        tag: `channel-${req.params.id}`,
+        url: "/"
+      }).catch(console.error);
+    }
     res.status(201).json(result);
   } catch (error) { next(error); }
 });
@@ -1035,8 +1067,12 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       attachmentId: z.string().uuid().nullable().optional(),
       replyTo: z.string().uuid().nullable().optional()
     }).refine((value) => value.body || value.attachmentId, { message: "Enter a message or attach a file" }).parse(req.body);
-    const [colleague] = await sql`SELECT id FROM users WHERE id = ${req.params.userId} AND organization_id = ${req.auth.organizationId}`;
+    const [colleague] = await sql`
+      SELECT id, CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member') ELSE full_name END AS full_name
+      FROM users WHERE id = ${req.params.userId} AND organization_id = ${req.auth.organizationId}
+    `;
     if (!colleague || colleague.id === req.auth.userId) return res.status(400).json({ error: "Select another employee" });
+    const mentionedUserIds = findMentionedUserIds(input.body, [colleague], req.auth.userId);
     const [message] = await sql`
       INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body, attachment_id, reply_to_id)
       SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${req.params.userId}, ${input.body}, a.id,
@@ -1063,10 +1099,10 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       FROM direct_messages original JOIN users author ON author.id = original.sender_id
       WHERE original.id = ${message.reply_to_id}
     ` : [null];
-    const result = { ...message, ...sender, ...attachment, ...reply, reactions: [] };
+    const result = { ...message, ...sender, ...attachment, ...reply, mentioned_user_ids: mentionedUserIds, reactions: [] };
     req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", { ...result, recipient_id: req.params.userId });
     sendPushToUser(req.params.userId, {
-      title: sender.sender_name,
+      title: mentionedUserIds.includes(req.params.userId) ? `${sender.sender_name} mentioned you` : sender.sender_name,
       body: (input.body || `Shared ${attachment?.file_name || "a file"}`).slice(0, 180),
       tag: `direct-${req.auth.userId}`,
       url: "/"

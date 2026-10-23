@@ -134,8 +134,6 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     try {
       const result = await api("/profile/privacy", { method: "PATCH", body: JSON.stringify(privacy) });
       onUserUpdate?.(result.user);
-      await onRefresh();
-      window.dispatchEvent(new CustomEvent("luxsyncspace:self-updated", { detail: result.user }));
       onToast(result.message);
     } catch (error) { onToast(error.message); }
     finally { setBusy(false); }
