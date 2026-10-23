@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, authStore } from "./lib/api";
+import { startUserActivityTracker } from "./lib/activityTracker";
 import { Login } from "./pages/Login";
 import { Shell } from "./components/Shell";
 import { Home } from "./pages/Home";
@@ -23,6 +24,14 @@ import { OnboardingTutorial } from "./components/OnboardingTutorial";
 export default function App() {
   const [user, setUser] = useState(null);
   const [data, setData] = useState({ people: [], channels: [], events: [], announcements: [], directUnreadCounts: {} });
+  const userRef = useRef(user);
+  const eventsRef = useRef(data.events);
+  const trackerRef = useRef(null);
+
+  useEffect(() => {
+    userRef.current = user;
+    eventsRef.current = data.events;
+  }, [user, data.events]);
   const [active, setActive] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("channel") || params.get("direct") ? "chat" : params.get("view") || "home";
@@ -354,13 +363,32 @@ export default function App() {
     }));
   }, []);
 
-  async function changeAvailabilityStatus(status) {
+  const changeAvailabilityStatus = useCallback(async (status, { isAuto = false } = {}) => {
     try {
+      if (!isAuto) {
+        trackerRef.current?.notifyManualStatus(status);
+      }
       const presence = await api("/presence", { method: "PATCH", body: JSON.stringify({ status }) });
       updatePresence(presence);
-      setToast("Status updated");
-    } catch (error) { setToast(error.message); }
-  }
+      if (!isAuto) setToast("Status updated");
+    } catch (error) {
+      if (!isAuto) setToast(error.message);
+    }
+  }, [updatePresence]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const tracker = startUserActivityTracker({
+      getUser: () => userRef.current,
+      getEvents: () => eventsRef.current,
+      onStatusChange: (status) => changeAvailabilityStatus(status, { isAuto: true })
+    });
+    trackerRef.current = tracker;
+    return () => {
+      tracker.stop();
+      trackerRef.current = null;
+    };
+  }, [user?.id, changeAvailabilityStatus]);
 
   function completeTutorial(completedAt) {
     setUser((current) => ({ ...current, onboarding_completed_at: completedAt || new Date().toISOString() }));

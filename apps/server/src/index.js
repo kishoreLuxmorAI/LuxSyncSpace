@@ -17,6 +17,7 @@ import { provisioningRouter } from "./routes/provisioning.js";
 import { startEventReminderScheduler } from "./services/eventReminders.js";
 import { sql } from "./db/client.js";
 import { cached } from "./services/cache.js";
+import { getScheduleInfo } from "./services/schedule.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -70,7 +71,54 @@ io.use(async (socket, next) => {
     next(new Error("unauthorized"));
   }
 });
+
+const connectedUsers = new Map();
+const disconnectTimeouts = new Map();
+
 io.on("connection", (socket) => {
+  const { userId, organizationId } = socket.auth;
+  if (disconnectTimeouts.has(userId)) {
+    clearTimeout(disconnectTimeouts.get(userId));
+    disconnectTimeouts.delete(userId);
+  }
+  if (!connectedUsers.has(userId)) connectedUsers.set(userId, new Set());
+  connectedUsers.get(userId).add(socket.id);
+
+  sql`UPDATE users SET last_active_at = NOW() WHERE id = ${userId}`.catch(() => {});
+
+  socket.on("presence:heartbeat", () => {
+    sql`UPDATE users SET last_active_at = NOW() WHERE id = ${userId}`.catch(() => {});
+  });
+
+  socket.on("disconnect", () => {
+    const userSockets = connectedUsers.get(userId);
+    if (userSockets) {
+      userSockets.delete(socket.id);
+      if (userSockets.size === 0) {
+        connectedUsers.delete(userId);
+        const timeout = setTimeout(async () => {
+          disconnectTimeouts.delete(userId);
+          if (!connectedUsers.has(userId)) {
+            try {
+              const [updated] = await sql`
+                UPDATE users
+                SET presence = 'offline', availability_status = 'offline'
+                WHERE id = ${userId} AND availability_status IN ('online', 'away')
+                RETURNING id, presence, availability_status
+              `;
+              if (updated) {
+                io.to(`org:${organizationId}`).emit("presence:updated", updated);
+              }
+            } catch (err) {
+              console.error("Disconnect presence update error", err.message);
+            }
+          }
+        }, 15_000);
+        disconnectTimeouts.set(userId, timeout);
+      }
+    }
+  });
+
   socket.join(`user:${socket.auth.userId}`);
   socket.join(`org:${socket.auth.organizationId}`);
   cached(`socket-memberships:${socket.auth.organizationId}`, 10_000, () =>
@@ -239,6 +287,33 @@ io.on("connection", (socket) => {
   });
 });
 startEventReminderScheduler(io);
+
+// Availability schedule & inactivity sweeper (runs every 30 seconds)
+setInterval(async () => {
+  try {
+    const now = new Date();
+    const schedule = getScheduleInfo(now);
+    const idleMinutes = schedule.isOffSchedule ? 2 : 5;
+    const idleCutoff = new Date(Date.now() - idleMinutes * 60_000);
+
+    const idleUsers = await sql`
+      UPDATE users
+      SET availability_status = 'away', presence = 'away'
+      WHERE availability_status = 'online'
+        AND last_active_at < ${idleCutoff}
+      RETURNING id, organization_id, presence, availability_status
+    `;
+    for (const idle of idleUsers) {
+      io.to(`org:${idle.organization_id}`).emit("presence:updated", {
+        id: idle.id,
+        presence: idle.presence,
+        availability_status: idle.availability_status
+      });
+    }
+  } catch (err) {
+    console.error("Presence schedule sweeper error:", err.message);
+  }
+}, 30_000);
 
 if (!process.env.VERCEL) {
   const clientDist = path.join(config.root, "apps/client/dist");
