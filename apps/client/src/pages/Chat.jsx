@@ -620,13 +620,19 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
 
   function insertEmoji(emoji) {
     const element = textareaRef.current;
-    const start = element?.selectionStart ?? message.length;
-    const end = element?.selectionEnd ?? message.length;
-    setMessage(`${message.slice(0, start)}${emoji}${message.slice(end)}`);
-    setEmojiOpen(false);
+    if (!element) {
+      setMessage((prev) => `${prev}${emoji}`);
+      return;
+    }
+    const start = element.selectionStart ?? element.value.length;
+    const end = element.selectionEnd ?? element.value.length;
+    const prevValue = element.value;
+    const nextValue = `${prevValue.slice(0, start)}${emoji}${prevValue.slice(end)}`;
+    setMessage(nextValue);
+    const newCursor = start + emoji.length;
     requestAnimationFrame(() => {
-      element?.focus();
-      element?.setSelectionRange(start + emoji.length, start + emoji.length);
+      element.focus();
+      element.setSelectionRange(newCursor, newCursor);
     });
   }
 
