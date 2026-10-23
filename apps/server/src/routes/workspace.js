@@ -9,6 +9,7 @@ import { sendEmployeeInvitation, sendPasswordResetCompleted, sendSupportRequest 
 import { config } from "../config.js";
 import { sendPushToChannel, sendPushToOrganization, sendPushToUser } from "../services/push.js";
 import { cached, invalidateCache } from "../services/cache.js";
+import { resolveUserPresence, getScheduleInfo } from "../services/schedule.js";
 
 export const workspaceRouter = Router();
 workspaceRouter.use(requireAuth);
@@ -87,8 +88,8 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
     const { userId, organizationId } = req.auth;
     const viewerRole = await currentRole(userId);
     const [people, channels, events, announcements, channelUnreadRows, directUnreadRows] = await Promise.all([
-      cached(`people:${organizationId}`, 30_000, () => sql`SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
-             u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status,
+      cached(`people:${organizationId}`, 5_000, () => sql`SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
+             u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status, u.last_active_at,
              u.employment_status, u.offboarded_at, u.deleted_at, u.display_name, u.hide_full_name,
              u.hide_email, u.onboarding_completed_at,
              CASE WHEN m.hide_full_name THEN COALESCE(NULLIF(m.display_name, ''), 'Team member') ELSE m.full_name END AS manager_name
@@ -139,16 +140,27 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           GROUP BY sender_id`
     ]);
     const channelUnread = new Map(channelUnreadRows.map((row) => [row.channel_id, row.unread_count]));
+
+    const now = new Date();
     const directoryPeople = people
       .filter((person) => (person.employment_status || "active") === "active")
-      .map((person) => person.id === userId ? person : {
-        ...person,
-        full_name: person.hide_full_name ? (person.display_name || "Team member") : person.full_name,
-        email: person.hide_email ? null : person.email
+      .map((person) => {
+        const presenceInfo = resolveUserPresence(person, { now, events });
+        return {
+          ...person,
+          ...presenceInfo,
+          full_name: person.id !== userId && person.hide_full_name ? (person.display_name || "Team member") : person.full_name,
+          email: person.id !== userId && person.hide_email ? null : person.email
+        };
       });
     res.json({
       people: directoryPeople,
-      workforce: workforceRoles.has(viewerRole) ? people : undefined,
+      workforce: workforceRoles.has(viewerRole)
+        ? people.map((person) => ({
+            ...person,
+            ...resolveUserPresence(person, { now, events })
+          }))
+        : undefined,
       channels: channels.map((channel) => ({ ...channel, unread_count: channelUnread.get(channel.id) || 0 })),
       events,
       announcements,
@@ -212,17 +224,27 @@ workspaceRouter.post("/employees/:id/password-reset", async (req, res, next) => 
 workspaceRouter.patch("/presence", async (req, res, next) => {
   try {
     const { status } = z.object({
-      status: z.enum(["online", "break", "lunch", "unavailable", "meeting", "offline"])
+      status: z.enum(["online", "away", "break", "lunch", "unavailable", "meeting", "offline"])
     }).parse(req.body);
     const legacyPresence = status === "online" ? "online" : status === "offline" ? "offline" : status === "unavailable" ? "busy" : "away";
     const [updated] = await sql`
-      UPDATE users SET availability_status = ${status}, presence = ${legacyPresence}
+      UPDATE users SET availability_status = ${status}, presence = ${legacyPresence}, last_active_at = NOW()
       WHERE id = ${req.auth.userId} AND organization_id = ${req.auth.organizationId}
-      RETURNING id, presence, availability_status
+      RETURNING id, presence, availability_status, last_active_at
     `;
     invalidateCache(`people:${req.auth.organizationId}`);
     req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("presence:updated", updated);
     res.json(updated);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.post("/presence/heartbeat", async (req, res, next) => {
+  try {
+    await sql`
+      UPDATE users SET last_active_at = NOW()
+      WHERE id = ${req.auth.userId} AND organization_id = ${req.auth.organizationId}
+    `;
+    res.json({ ok: true });
   } catch (error) { next(error); }
 });
 

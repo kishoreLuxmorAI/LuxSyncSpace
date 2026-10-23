@@ -16,6 +16,7 @@ const nav = [
 
 const availabilityOptions = [
   ["online", "Online"],
+  ["away", "Away"],
   ["break", "On a break"],
   ["lunch", "At lunch"],
   ["unavailable", "Unavailable"],
