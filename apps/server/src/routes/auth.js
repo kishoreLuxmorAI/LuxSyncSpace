@@ -5,6 +5,7 @@ import { z } from "zod";
 import { sql } from "../db/client.js";
 import { config } from "../config.js";
 import { requireAuth } from "../middleware/auth.js";
+import { getScheduleInfo, resolveUserPresence } from "../services/schedule.js";
 
 export const authRouter = Router();
 
@@ -23,9 +24,12 @@ authRouter.post("/login", async (req, res, next) => {
     if ((user.employment_status || "active") !== "active") {
       return res.status(403).json({ error: user.employment_status === "offboarded" ? "Your account has been offboarded. Contact your administrator." : "This employee account is no longer active." });
     }
-    await sql`UPDATE users SET presence = 'online', availability_status = 'online' WHERE id = ${user.id}`;
-    user.presence = "online";
-    user.availability_status = "online";
+    const schedule = getScheduleInfo(new Date());
+    const initialStatus = schedule.isOffSchedule ? "away" : "online";
+    await sql`UPDATE users SET presence = ${initialStatus}, availability_status = ${initialStatus}, last_active_at = NOW() WHERE id = ${user.id}`;
+    user.presence = initialStatus;
+    user.availability_status = initialStatus;
+    user.last_active_at = new Date();
     const token = jwt.sign(
       { userId: user.id, organizationId: user.organization_id, email: user.email },
       config.jwtSecret,
@@ -67,6 +71,11 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     LEFT JOIN users m ON m.id = u.manager_id
     WHERE u.id = ${req.auth.userId}
   `;
+  if (user) {
+    const presenceInfo = resolveUserPresence(user, { now: new Date() });
+    user.presence = presenceInfo.presence;
+    user.availability_status = presenceInfo.availability_status;
+  }
   res.json({ user });
 });
 

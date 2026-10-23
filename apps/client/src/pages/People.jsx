@@ -53,7 +53,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
       <section className="directory-stats">
         <div><span className="metric-icon blue"><Users size={20} /></span><span><b>{activePeople.length}</b><small>Active people</small></span></div>
         <div><span className="metric-icon green"><Building2 size={20} /></span><span><b>{departments.length - 1}</b><small>Departments</small></span></div>
-        <div><span className="presence-large" /><span><b>{activePeople.filter((p) => p.presence === "online").length}</b><small>Online now</small></span></div>
+        <div><span className="presence-large" /><span><b>{activePeople.filter((p) => (p.availability_status || p.presence) === "online" && p.presence !== "away" && p.presence !== "offline").length}</b><small>Online now</small></span></div>
       </section>
       <section className="directory-panel panel">
         <div className="directory-tools">

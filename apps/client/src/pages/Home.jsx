@@ -8,7 +8,10 @@ import { dateHeading, eventTime } from "../lib/format";
 export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJoinMeeting, onStartMeeting }) {
   const [announcementOpen, setAnnouncementOpen] = useState(false);
   const nextEvents = data.events.slice(0, 3);
-  const online = data.people.filter((p) => p.presence === "online");
+  const online = data.people.filter((p) => {
+    const status = p.availability_status || p.presence;
+    return status === "online" && p.presence !== "away" && p.presence !== "offline";
+  });
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const canAnnounce = ["hr", "senior_leader"].includes(user.role);
@@ -71,6 +74,7 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
         <header className="panel-header"><div><h2>Team pulse</h2><p>People available right now</p></div><button className="link-button" onClick={() => navigate("people")}>View directory <ArrowRight size={15} /></button></header>
         <div className="people-strip">
           {online.slice(0, 5).map((person) => <button key={person.id} onClick={() => navigate("people")}><Avatar person={person} size="lg" showPresence /><span><b>{person.full_name}</b><small>{person.title}</small></span></button>)}
+          {!online.length && <div className="empty-compact"><Users size={20} /><span>No colleagues online right now.</span></div>}
         </div>
       </section>
       {announcementOpen && <CreateAnnouncement onCreate={publishAnnouncement} onClose={() => setAnnouncementOpen(false)} />}
