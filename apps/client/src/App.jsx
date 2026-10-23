@@ -440,7 +440,22 @@ export default function App() {
     const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
     return <>
       <MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onEndMeeting={endMeetingForEveryone} onToast={setToast} />
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
+      <NotificationBridge
+        user={user}
+        channels={data.channels}
+        onRefresh={refreshWorkspace}
+        onIncomingCall={setIncomingCall}
+        onNotification={receiveNotification}
+        onChatMessage={receiveChatMessage}
+        onPresenceUpdate={updatePresence}
+        onMeetingEnded={(endedEvent) => {
+          if (endedEvent?.event_id === meetingId) {
+            const isCall = Boolean(endedEvent?.isCall || meeting.title?.includes(" and ") || (meeting.title || "").toLowerCase().includes("call"));
+            setToast(isCall ? "Call ended." : "Meeting ended.");
+            leaveMeeting();
+          }
+        }}
+      />
       <InAppNotification notification={notification} onOpen={() => setNotification(null)} onClose={() => setNotification(null)} />
       <Toast message={toast} onClose={() => setToast("")} />
     </>;
