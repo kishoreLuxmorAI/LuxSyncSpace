@@ -31,8 +31,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS availability_status TEXT NOT NULL DEFAULT 'offline';
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_availability_status_check;
-ALTER TABLE users ADD CONSTRAINT users_availability_status_check CHECK (availability_status IN ('online','away','break','lunch','unavailable','meeting','offline'));
-ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE users ADD CONSTRAINT users_availability_status_check CHECK (availability_status IN ('online','break','lunch','unavailable','meeting','offline'));
 ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_status TEXT NOT NULL DEFAULT 'active';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS offboarded_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
