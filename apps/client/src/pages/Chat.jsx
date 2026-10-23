@@ -19,6 +19,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState("");
+  const directDraftsRef = useRef(new Map());
+  const selectedPersonIdRef = useRef(selectedPerson?.id || null);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -90,6 +92,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
 
   useEffect(() => {
     setChannelMutedState(channels.find((channel) => channel.id === selected)?.muted || false);
+    const previousPersonId = selectedPersonIdRef.current;
+    if (previousPersonId) directDraftsRef.current.set(previousPersonId, message);
+    selectedPersonIdRef.current = selectedPerson?.id || null;
+    setMessage(selectedPerson ? directDraftsRef.current.get(selectedPerson.id) || "" : "");
     setMessageSearch("");
     setMessageSearchOpen(false);
     setMoreOpen(false);
