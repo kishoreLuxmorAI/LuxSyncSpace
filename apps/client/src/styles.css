@@ -462,7 +462,11 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .meeting-list-main { min-width: 0; }.meeting-list-main h3 { margin: 5px 0; font-size: 13px; }.meeting-list-main > p { margin: 0 0 7px; color: #7b8799; font-size: 9px; display: flex; align-items: center; gap: 5px; }
 .meeting-mode-chip { width: max-content; padding: 3px 7px; border-radius: 8px; color: #315cae; background: #edf3ff; display: flex; align-items: center; gap: 4px; font-size: 7.5px; font-weight: 800; }
 .meeting-cancelled-chip { width: max-content; padding: 3px 7px; border-radius: 8px; color: #a63546; background: #ffedf0; display: flex; align-items: center; gap: 4px; font-size: 7.5px; font-weight: 800; }
+.meeting-ended-chip { width: max-content; padding: 3px 7px; border-radius: 8px; color: #5a687d; background: #eef2f7; display: flex; align-items: center; gap: 4px; font-size: 7.5px; font-weight: 800; }
 .meetings-list > article.cancelled { background: #fafafa; }.meetings-list > article.cancelled .meeting-date, .meetings-list > article.cancelled h3 { opacity: .62; }.meetings-list > article.cancelled h3 { text-decoration: line-through; }
+.meetings-list > article.ended { background: #fafbfc; }.meetings-list > article.ended .meeting-date, .meetings-list > article.ended h3 { opacity: .72; }
+.meeting-status-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 6px 12px; border-radius: 6px; }
+.meeting-status-badge.ended { color: #5a687d; background: #f1f4f9; border: 1px solid #dce2ed; }
 .meeting-list-main > .cancellation-reason { color: #a33b49; font-weight: 700; }
 .meeting-list-actions { display: flex; gap: 7px; }
 .meeting-mode-select { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
