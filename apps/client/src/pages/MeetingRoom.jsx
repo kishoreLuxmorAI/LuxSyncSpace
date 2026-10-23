@@ -28,6 +28,7 @@ const VIDEO_CONSTRAINTS = {
 export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onEndMeeting, onToast, skipLobby = false }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
   const isOrganizer = meeting.organizer_id === user.id;
+  const isDirectCall = Boolean(meeting.isCall || meeting.title?.includes(" and ") || (meeting.title || "").toLowerCase().includes("call"));
   const [inLobby, setInLobby] = useState(!skipLobby);
   const [cameraBlocked, setCameraBlocked] = useState(false);
   const [micDevice, setMicDevice] = useState("Microphone (Realtek(R) Audio)");
@@ -107,6 +108,18 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       socket.emit("meeting:presence", { roomId: meeting.id }, (response) => {
         if (disposed) return;
         if (!response?.ok) {
+          if (response?.ended || (response?.error || "").toLowerCase().includes("ended")) {
+            onToast?.(isDirectCall ? "This call has ended." : "This meeting has ended.");
+            localStreamRef.current?.getTracks().forEach((track) => track.stop());
+            onLeave?.();
+            return;
+          }
+          if (response?.cancelled) {
+            onToast?.("This meeting was cancelled.");
+            localStreamRef.current?.getTracks().forEach((track) => track.stop());
+            onLeave?.();
+            return;
+          }
           setLobbyPresenceStatus("error");
           return;
         }
@@ -365,7 +378,17 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       socket.on("meeting:user-joined", ({ socketId, user: participantUser }) => {
         upsertParticipant(socketId, { user: participantUser });
       });
-      socket.on("meeting:user-left", ({ socketId }) => removeParticipant(socketId));
+      socket.on("meeting:user-left", ({ socketId }) => {
+        removeParticipant(socketId);
+        if (isDirectCall) {
+          setStatus("Call ended");
+          setParticipants([]);
+          peersRef.current.forEach((peer) => peer.close());
+          peersRef.current.clear();
+          onToast("The other participant left. Call ended.");
+          window.setTimeout(onLeave, 900);
+        }
+      });
       socket.on("meeting:signal", async ({ from, signal, user: participantUser }) => {
         try {
           const peer = createPeer(from, participantUser);
@@ -394,18 +417,32 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       });
       socket.on("meeting:hand", ({ socketId, raised: isRaised }) => upsertParticipant(socketId, { raised: isRaised }));
       socket.on("meeting:cancelled", ({ body }) => {
+        setStatus("Meeting cancelled");
+        setParticipants([]);
+        peersRef.current.forEach((peer) => peer.close());
+        peersRef.current.clear();
         onToast(body || "This meeting was cancelled by the organizer.");
         window.setTimeout(onLeave, 1800);
       });
-      socket.on("meeting:ended", ({ message }) => {
-        onToast(message || "The organizer ended this meeting.");
+      socket.on("meeting:ended", ({ message, isCall }) => {
+        const endedText = isCall || isDirectCall ? "Call ended" : "Meeting ended";
+        setStatus(endedText);
+        setParticipants([]);
+        peersRef.current.forEach((peer) => peer.close());
+        peersRef.current.clear();
+        onToast(message || `${endedText}.`);
         window.setTimeout(onLeave, 900);
       });
       socket.on("connect", () => {
         setStatus("Connecting securely...");
         socket.emit("meeting:join", { roomId: meeting.id }, async (response) => {
           if (!response?.ok) {
-            setStatus(response?.error || "Could not join meeting");
+            const isEnded = response?.ended || (response?.error || "").toLowerCase().includes("ended");
+            const errText = isEnded ? (isDirectCall ? "This call has ended" : "This meeting has ended") : (response?.error || "Could not join meeting");
+            setStatus(errText);
+            setParticipants([]);
+            onToast(errText);
+            window.setTimeout(onLeave, 1200);
             return;
           }
           setStatus("Connected");
@@ -533,6 +570,18 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     } else {
       onToast?.("Could not copy meeting link");
     }
+  }
+
+  async function handleLeaveCall() {
+    if (isDirectCall) {
+      try {
+        await onEndMeeting(meeting);
+        return;
+      } catch (err) {
+        console.error("End call error", err);
+      }
+    }
+    onLeave();
   }
 
   async function endForEveryone() {
@@ -734,7 +783,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
           <MeetingControl active={panel === "people"} onClick={() => setPanel(panel === "people" ? null : "people")} icon={Users} label="People" />
           <MeetingControl onClick={() => document.documentElement.requestFullscreen?.()} icon={Expand} label="Full screen" />
         </div>
-        <div className="meeting-exit-actions desktop-leave"><button className="leave-meeting" onClick={onLeave}><PhoneOff size={18} /><span>Leave</span></button>{isOrganizer && <button className="end-meeting-for-all" onClick={() => setConfirmEnd(true)}><PhoneOff size={18} /><span>End for all</span></button>}</div>
+        <div className="meeting-exit-actions desktop-leave"><button className="leave-meeting" onClick={handleLeaveCall}><PhoneOff size={18} /><span>{isDirectCall ? "End call" : "Leave"}</span></button>{isOrganizer && <button className="end-meeting-for-all" onClick={() => setConfirmEnd(true)}><PhoneOff size={18} /><span>End for all</span></button>}</div>
       </footer>
       {meetingChatPopup && <button className="meeting-chat-popup" onClick={() => { setPanel("chat"); setMeetingChatPopup(null); }}>
         <span><MessageSquareText size={18} /></span><div><b>{meetingChatPopup.sender_name}</b><p>{meetingChatPopup.body}</p></div><small>Open chat</small>
@@ -773,7 +822,7 @@ function VideoTile({ participant, localVideoRef, cameraOn, speakerOn }) {
     {soundBlocked && <button className="meeting-enable-audio" onClick={resumePlayback}><Volume2 size={18} /> Tap to enable sound</button>}
     {!hasVideo && <div className="meeting-avatar" style={{ "--participant": participant.user?.avatar_color }}><span>{participant.user?.initials || "?"}</span></div>}
     {participant.raised && <span className="raised-hand"><Hand size={16} /> Hand raised</span>}
-    <footer><b>{participant.user?.full_name || "Joining…"}{participant.local ? " (You)" : ""}</b>{participant.local && !participant.stream && <small>No media access</small>}</footer>
+    <footer><b>{participant.user?.full_name || (participant.local ? "You" : "Connecting…")}{participant.local ? " (You)" : ""}</b>{participant.local && !participant.stream && <small>No media access</small>}</footer>
   </article>;
 }
 

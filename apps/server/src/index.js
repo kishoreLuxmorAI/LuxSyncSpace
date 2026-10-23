@@ -16,7 +16,7 @@ import { workspaceRouter } from "./routes/workspace.js";
 import { provisioningRouter } from "./routes/provisioning.js";
 import { startEventReminderScheduler } from "./services/eventReminders.js";
 import { sql } from "./db/client.js";
-import { cached } from "./services/cache.js";
+import { cached, invalidateCache } from "./services/cache.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -98,14 +98,14 @@ io.on("connection", (socket) => {
   socket.on("meeting:presence", async ({ roomId }, acknowledge = () => {}) => {
     try {
       const [meeting] = await sql`
-        SELECT id FROM events
+        SELECT id, cancelled_at, ended_at FROM events
         WHERE id = ${roomId}
           AND organization_id = ${socket.auth.organizationId}
           AND is_online = TRUE
-          AND cancelled_at IS NULL
-          AND ended_at IS NULL
       `;
       if (!meeting) return acknowledge({ ok: false, error: "Meeting not found or access denied" });
+      if (meeting.cancelled_at) return acknowledge({ ok: false, error: "This meeting was cancelled", cancelled: true });
+      if (meeting.ended_at) return acknowledge({ ok: false, error: "This call has ended", ended: true });
 
       const participants = await io.in(`meeting:${meeting.id}`).fetchSockets();
       acknowledge({
@@ -127,9 +127,10 @@ io.on("connection", (socket) => {
           event.id AS meeting_id,
           event.title AS meeting_title,
           event.organizer_id,
-          event.organizer_id,
           event.starts_at,
           event.ends_at,
+          event.cancelled_at,
+          event.ended_at,
           profile.id AS profile_id,
           CASE WHEN profile.hide_full_name
               THEN COALESCE(NULLIF(profile.display_name, ''), 'Team member')
@@ -143,10 +144,10 @@ io.on("connection", (socket) => {
         WHERE event.id = ${roomId}
           AND event.organization_id = ${socket.auth.organizationId}
           AND event.is_online = TRUE
-          AND event.cancelled_at IS NULL
-          AND event.ended_at IS NULL
       `;
       if (!joinData) return acknowledge({ ok: false, error: "Meeting not found or access denied" });
+      if (joinData.cancelled_at) return acknowledge({ ok: false, error: "This meeting was cancelled", cancelled: true });
+      if (joinData.ended_at) return acknowledge({ ok: false, error: "This call has ended", ended: true });
       const meeting = {
         id: joinData.meeting_id,
         title: joinData.meeting_title,
@@ -227,16 +228,64 @@ io.on("connection", (socket) => {
     if (socket.meetingRoom) socket.to(socket.meetingRoom).emit("meeting:hand", { socketId: socket.id, raised: Boolean(raised) });
   });
 
-  socket.on("meeting:leave", () => {
+  async function handleMeetingExit() {
     if (!socket.meetingRoom) return;
-    socket.to(socket.meetingRoom).emit("meeting:user-left", { socketId: socket.id });
-    socket.leave(socket.meetingRoom);
+    const room = socket.meetingRoom;
+    socket.to(room).emit("meeting:user-left", { socketId: socket.id });
+    socket.leave(room);
     socket.meetingRoom = null;
-  });
+    socket.data.meetingProfile = null;
 
-  socket.on("disconnecting", () => {
-    if (socket.meetingRoom) socket.to(socket.meetingRoom).emit("meeting:user-left", { socketId: socket.id });
-  });
+    try {
+      const roomId = room.replace("meeting:", "");
+      const remainingSockets = await io.in(room).fetchSockets();
+      const remainingProfiles = remainingSockets.filter((s) => s.data.meetingProfile);
+      const [event] = await sql`
+        SELECT id, title, organizer_id, meeting_mode, organization_id, ended_at, cancelled_at
+        FROM events WHERE id = ${roomId}
+      `;
+      if (!event || event.ended_at || event.cancelled_at) return;
+
+      const attendeeRows = await sql`
+        SELECT user_id FROM event_attendees
+        WHERE event_id = ${roomId} AND user_id <> ${event.organizer_id}
+      `;
+      const isDirectCall = (event.title && event.title.includes(" and ")) || attendeeRows.length === 1;
+
+      // If room is completely empty, or if it was a 1-on-1 direct call and one person leaves
+      if (remainingProfiles.length === 0 || (isDirectCall && remainingProfiles.length <= 1)) {
+        const [ended] = await sql`
+          UPDATE events
+          SET ended_at = NOW(),
+              ends_at = GREATEST(starts_at + INTERVAL '1 minute', LEAST(ends_at, NOW()))
+          WHERE id = ${roomId} AND ended_at IS NULL
+          RETURNING id, title, meeting_mode, organization_id, ended_at
+        `;
+        if (ended) {
+          const isCall = ended.meeting_mode === "audio" || (ended.title || "").toLowerCase().includes("call") || (ended.title || "").includes(" and ");
+          const endMessage = isCall ? "Call ended." : "Meeting ended.";
+          io.to(room).emit("meeting:ended", {
+            event_id: ended.id,
+            message: endMessage,
+            isCall
+          });
+          io.in(room).socketsLeave(room);
+          io.to(`org:${ended.organization_id}`).emit("event:ended", {
+            event_id: ended.id,
+            ended_at: ended.ended_at,
+            title: ended.title,
+            isCall
+          });
+          invalidateCache(`events:${ended.organization_id}`);
+        }
+      }
+    } catch (err) {
+      console.error("Meeting exit auto-end error:", err.message);
+    }
+  }
+
+  socket.on("meeting:leave", handleMeetingExit);
+  socket.on("disconnecting", handleMeetingExit);
 });
 startEventReminderScheduler(io);
 
