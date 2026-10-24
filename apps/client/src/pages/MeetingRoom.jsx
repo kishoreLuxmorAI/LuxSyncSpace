@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, MonitorUp, MoreHorizontal, MoreVertical, PhoneOff,
-  Send, Sparkles, Users, Video, VideoOff, Volume2, VolumeX, X
+  Check, ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, MonitorUp, PhoneOff,
+  Send, Users, Video, VideoOff, Volume2, VolumeX, X
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, SOCKET_URL, socketOptions } from "../lib/api";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { Modal } from "../components/Modal";
 
 const DEFAULT_ICE_SERVERS = [
@@ -27,6 +28,7 @@ const VIDEO_CONSTRAINTS = {
 export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onEndMeeting, onToast, skipLobby = false }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
   const isOrganizer = meeting.organizer_id === user.id;
+  const isDirectCall = Boolean(meeting.isCall || meeting.title?.includes(" and ") || (meeting.title || "").toLowerCase().includes("call"));
   const [inLobby, setInLobby] = useState(!skipLobby);
   const [cameraBlocked, setCameraBlocked] = useState(false);
   const [micDevice, setMicDevice] = useState("Microphone (Realtek(R) Audio)");
@@ -36,6 +38,8 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const [localStream, setLocalStream] = useState(null);
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(!isAudioOnly);
+  const [lobbyParticipants, setLobbyParticipants] = useState([]);
+  const [lobbyPresenceStatus, setLobbyPresenceStatus] = useState("loading");
   const [screenOn, setScreenOn] = useState(false);
   const [raised, setRaised] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(true);
@@ -47,8 +51,10 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const [elapsed, setElapsed] = useState("00:00");
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [invitingUserId, setInvitingUserId] = useState(null);
   const [invitedUsers, setInvitedUsers] = useState(new Set());
+  const inviteResetTimersRef = useRef(new Map());
   const localVideoRef = useRef();
   const lobbyVideoRef = useRef();
   const localStreamRef = useRef();
@@ -60,6 +66,11 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const reconnectTimersRef = useRef(new Map());
   const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
   const chatBottomRef = useRef(null);
+
+  useEffect(() => () => {
+    inviteResetTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    inviteResetTimersRef.current.clear();
+  }, []);
 
   useEffect(() => { panelRef.current = panel; }, [panel]);
 
@@ -85,6 +96,52 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     }, 1000);
     return () => clearInterval(timer);
   }, [inLobby]);
+
+  useEffect(() => {
+    if (!inLobby || skipLobby) return;
+    const socket = io(SOCKET_URL, socketOptions());
+    let disposed = false;
+    let refreshTimer;
+    setLobbyPresenceStatus("loading");
+
+    function refreshPresence() {
+      socket.emit("meeting:presence", { roomId: meeting.id }, (response) => {
+        if (disposed) return;
+        if (!response?.ok) {
+          if (response?.ended || (response?.error || "").toLowerCase().includes("ended")) {
+            onToast?.(isDirectCall ? "This call has ended." : "This meeting has ended.");
+            localStreamRef.current?.getTracks().forEach((track) => track.stop());
+            onLeave?.();
+            return;
+          }
+          if (response?.cancelled) {
+            onToast?.("This meeting was cancelled.");
+            localStreamRef.current?.getTracks().forEach((track) => track.stop());
+            onLeave?.();
+            return;
+          }
+          setLobbyPresenceStatus("error");
+          return;
+        }
+        setLobbyParticipants(response.participants || []);
+        setLobbyPresenceStatus("ready");
+      });
+    }
+
+    socket.on("connect", refreshPresence);
+    socket.on("connect_error", () => {
+      if (!disposed) setLobbyPresenceStatus("error");
+    });
+    refreshTimer = window.setInterval(() => {
+      if (socket.connected) refreshPresence();
+    }, 5000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(refreshTimer);
+      socket.disconnect();
+    };
+  }, [inLobby, meeting.id, skipLobby]);
 
   // Initialize preview media and detect devices for the Lobby
   useEffect(() => {
@@ -321,7 +378,17 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       socket.on("meeting:user-joined", ({ socketId, user: participantUser }) => {
         upsertParticipant(socketId, { user: participantUser });
       });
-      socket.on("meeting:user-left", ({ socketId }) => removeParticipant(socketId));
+      socket.on("meeting:user-left", ({ socketId }) => {
+        removeParticipant(socketId);
+        if (isDirectCall) {
+          setStatus("Call ended");
+          setParticipants([]);
+          peersRef.current.forEach((peer) => peer.close());
+          peersRef.current.clear();
+          onToast("The other participant left. Call ended.");
+          window.setTimeout(onLeave, 900);
+        }
+      });
       socket.on("meeting:signal", async ({ from, signal, user: participantUser }) => {
         try {
           const peer = createPeer(from, participantUser);
@@ -350,18 +417,32 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       });
       socket.on("meeting:hand", ({ socketId, raised: isRaised }) => upsertParticipant(socketId, { raised: isRaised }));
       socket.on("meeting:cancelled", ({ body }) => {
+        setStatus("Meeting cancelled");
+        setParticipants([]);
+        peersRef.current.forEach((peer) => peer.close());
+        peersRef.current.clear();
         onToast(body || "This meeting was cancelled by the organizer.");
         window.setTimeout(onLeave, 1800);
       });
-      socket.on("meeting:ended", ({ message }) => {
-        onToast(message || "The organizer ended this meeting.");
+      socket.on("meeting:ended", ({ message, isCall }) => {
+        const endedText = isCall || isDirectCall ? "Call ended" : "Meeting ended";
+        setStatus(endedText);
+        setParticipants([]);
+        peersRef.current.forEach((peer) => peer.close());
+        peersRef.current.clear();
+        onToast(message || `${endedText}.`);
         window.setTimeout(onLeave, 900);
       });
       socket.on("connect", () => {
         setStatus("Connecting securely...");
         socket.emit("meeting:join", { roomId: meeting.id }, async (response) => {
           if (!response?.ok) {
-            setStatus(response?.error || "Could not join meeting");
+            const isEnded = response?.ended || (response?.error || "").toLowerCase().includes("ended");
+            const errText = isEnded ? (isDirectCall ? "This call has ended" : "This meeting has ended") : (response?.error || "Could not join meeting");
+            setStatus(errText);
+            setParticipants([]);
+            onToast(errText);
+            window.setTimeout(onLeave, 1200);
             return;
           }
           setStatus("Connected");
@@ -474,11 +555,33 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     setChatMessage("");
   }
 
-  function copyLink() {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("channel");
-    url.searchParams.set("meeting", meeting.id);
-    navigator.clipboard.writeText(url.toString()).then(() => onToast("Internal meeting link copied"));
+  async function copyLink() {
+    const meetingId = meeting?.id || new URLSearchParams(window.location.search).get("meeting") || "";
+    const url = new URL(window.location.pathname, window.location.origin);
+    if (meetingId) {
+      url.searchParams.set("meeting", meetingId);
+    }
+    const inviteUrl = url.toString();
+    const success = await copyTextToClipboard(inviteUrl);
+    if (success) {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+      onToast?.("Meeting invite link copied to clipboard");
+    } else {
+      onToast?.("Could not copy meeting link");
+    }
+  }
+
+  async function handleLeaveCall() {
+    if (isDirectCall) {
+      try {
+        await onEndMeeting(meeting);
+        return;
+      } catch (err) {
+        console.error("End call error", err);
+      }
+    }
+    onLeave();
   }
 
   async function endForEveryone() {
@@ -496,8 +599,19 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   async function invitePerson(person) {
     setInvitingUserId(person.id);
     try {
-      await onInvite?.([person.id]);
+      if (!onInvite) throw new Error("Inviting people is currently unavailable.");
+      await onInvite([person.id]);
       setInvitedUsers((current) => new Set(current).add(person.id));
+      window.clearTimeout(inviteResetTimersRef.current.get(person.id));
+      const timer = window.setTimeout(() => {
+        setInvitedUsers((current) => {
+          const next = new Set(current);
+          next.delete(person.id);
+          return next;
+        });
+        inviteResetTimersRef.current.delete(person.id);
+      }, 10_000);
+      inviteResetTimersRef.current.set(person.id, timer);
     } catch (error) {
       onToast(error.message || "Could not invite this person.");
     } finally {
@@ -534,9 +648,6 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
             <div className="lobby-preview-box">
               <div className="lobby-preview-header">
                 <span className="lobby-user-label">{user.full_name?.toUpperCase() || "YOU"}</span>
-                <button className="lobby-preview-menu-btn" title="More options" type="button" aria-label="More options">
-                  <MoreVertical size={18} />
-                </button>
               </div>
 
               {hasActiveVideo ? (
@@ -554,10 +665,6 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
               )}
 
               <div className="lobby-preview-controls">
-                <button className="lobby-preview-sub-btn" title="Audio & video settings" type="button" aria-label="Audio & video settings">
-                  <MoreHorizontal size={18} />
-                </button>
-
                 <div className="lobby-preview-center-controls">
                   <button
                     type="button"
@@ -579,34 +686,24 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
                   </button>
                 </div>
 
-                <button className="lobby-preview-sub-btn" title="Apply visual effects" type="button" aria-label="Apply visual effects">
-                  <Sparkles size={18} />
-                </button>
               </div>
             </div>
 
-            <div className="lobby-device-selectors">
-              <button className="lobby-device-pill" type="button" title={micDevice}>
-                <Mic size={14} />
-                <span>{micDevice}</span>
-                <ChevronDown size={14} />
-              </button>
-              <button className="lobby-device-pill" type="button" title={speakerDevice}>
-                <Volume2 size={14} />
-                <span>{speakerDevice}</span>
-                <ChevronDown size={14} />
-              </button>
-              <button className="lobby-device-pill" type="button" title={cameraDevice}>
-                <Video size={14} />
-                <span>{cameraDevice}</span>
-                <ChevronDown size={14} />
-              </button>
-            </div>
           </div>
 
           <div className="lobby-action-card">
             <h1 className="lobby-title">Ready to join?</h1>
-            <p className="lobby-subtitle">No one else is here</p>
+            <p className="lobby-subtitle">
+              {lobbyPresenceStatus === "loading"
+                ? "Checking who's here…"
+                : lobbyPresenceStatus === "error"
+                  ? "Unable to check meeting participants"
+                  : lobbyParticipants.length === 0
+                    ? "No one else is here"
+                    : lobbyParticipants.length > 1
+                      ? `${lobbyParticipants[0].full_name} and ${lobbyParticipants.length - 1} more are already here`
+                      : `${lobbyParticipants[0].full_name} is already here`}
+            </p>
 
             <div className="lobby-join-wrapper">
               {(!cameraOn || !micOn || cameraBlocked) && (
@@ -617,16 +714,6 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
               </button>
             </div>
 
-            <button
-              className="lobby-secondary-btn"
-              onClick={() => {
-                localStreamRef.current?.getTracks().forEach((t) => t.stop());
-                onLeave();
-              }}
-              type="button"
-            >
-              Other ways to join <ChevronDown size={14} />
-            </button>
           </div>
         </main>
       </div>
@@ -637,7 +724,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
     <div className={`meeting-room ${isAudioOnly ? "audio-call" : "video-call"}`}>
       <header className="meeting-topbar">
         <div><img src="/icons/luxsyncspace-192.png" alt="" /><span><b>{meeting.title || "LuxSyncspace meeting"}</b><small>{status} · Encrypted media connection</small></span></div>
-        <div><time>{elapsed}</time><button onClick={copyLink}><Copy size={17} /> Copy invite link</button></div>
+        <div><time>{elapsed}</time><button onClick={copyLink} className={copiedLink ? "meeting-copied-btn" : ""} type="button" title="Copy meeting link">{copiedLink ? <Check size={17} /> : <Copy size={17} />} {copiedLink ? "Link copied!" : "Copy invite link"}</button></div>
       </header>
       <main className={`meeting-stage ${panel ? "with-panel" : ""}`}>
         <section className={`meeting-grid participants-${Math.min(allParticipants.length, 6)}`}>
@@ -690,15 +777,13 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
           <MeetingControl active={!micOn} onClick={toggleMic} icon={micOn ? Mic : MicOff} label={micOn ? "Mute" : "Unmute"} />
           {isAudioOnly && <MeetingControl active={!speakerOn} onClick={() => setSpeakerOn((enabled) => !enabled)} icon={speakerOn ? Volume2 : VolumeX} label={speakerOn ? "Speaker" : "Sound off"} />}
           {!isAudioOnly && <MeetingControl active={!cameraOn} onClick={toggleCamera} icon={cameraOn ? Video : VideoOff} label={cameraOn ? "Camera" : "Start video"} />}
-          <button className="mobile-leave" onClick={onLeave}><span><PhoneOff size={20} /></span><small>Leave</small></button>
-          {isOrganizer && <button className="mobile-end-for-all" onClick={() => setConfirmEnd(true)}><span><PhoneOff size={20} /></span><small>End for all</small></button>}
           {!isAudioOnly && <MeetingControl active={screenOn} onClick={shareScreen} icon={MonitorUp} label={screenOn ? "Stop sharing" : "Share screen"} />}
           <MeetingControl active={raised} onClick={toggleHand} icon={Hand} label={raised ? "Lower hand" : "Raise hand"} />
           <MeetingControl active={panel === "chat"} onClick={() => setPanel(panel === "chat" ? null : "chat")} icon={MessageSquareText} label="Chat" />
           <MeetingControl active={panel === "people"} onClick={() => setPanel(panel === "people" ? null : "people")} icon={Users} label="People" />
           <MeetingControl onClick={() => document.documentElement.requestFullscreen?.()} icon={Expand} label="Full screen" />
         </div>
-        <div className="meeting-exit-actions desktop-leave"><button className="leave-meeting" onClick={onLeave}><PhoneOff size={18} /><span>Leave</span></button>{isOrganizer && <button className="end-meeting-for-all" onClick={() => setConfirmEnd(true)}><PhoneOff size={18} /><span>End for all</span></button>}</div>
+        <div className="meeting-exit-actions desktop-leave"><button className="leave-meeting" onClick={handleLeaveCall}><PhoneOff size={18} /><span>{isDirectCall ? "End call" : "Leave"}</span></button>{isOrganizer && <button className="end-meeting-for-all" onClick={() => setConfirmEnd(true)}><PhoneOff size={18} /><span>End for all</span></button>}</div>
       </footer>
       {meetingChatPopup && <button className="meeting-chat-popup" onClick={() => { setPanel("chat"); setMeetingChatPopup(null); }}>
         <span><MessageSquareText size={18} /></span><div><b>{meetingChatPopup.sender_name}</b><p>{meetingChatPopup.body}</p></div><small>Open chat</small>
@@ -737,7 +822,7 @@ function VideoTile({ participant, localVideoRef, cameraOn, speakerOn }) {
     {soundBlocked && <button className="meeting-enable-audio" onClick={resumePlayback}><Volume2 size={18} /> Tap to enable sound</button>}
     {!hasVideo && <div className="meeting-avatar" style={{ "--participant": participant.user?.avatar_color }}><span>{participant.user?.initials || "?"}</span></div>}
     {participant.raised && <span className="raised-hand"><Hand size={16} /> Hand raised</span>}
-    <footer><b>{participant.user?.full_name || "Joining…"}{participant.local ? " (You)" : ""}</b>{participant.local && !participant.stream && <small>No media access</small>}</footer>
+    <footer><b>{participant.user?.full_name || (participant.local ? "You" : "Connecting…")}{participant.local ? " (You)" : ""}</b>{participant.local && !participant.stream && <small>No media access</small>}</footer>
   </article>;
 }
 
@@ -760,4 +845,3 @@ function MeetingChatBody({ body }) {
     return part;
   });
 }
-

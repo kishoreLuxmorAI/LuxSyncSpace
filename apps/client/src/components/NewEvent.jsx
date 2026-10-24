@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CalendarPlus, Check, Clock, MapPin, Search, Send } from "lucide-react";
 import { Modal } from "./Modal";
 import { Avatar } from "./Avatar";
@@ -119,12 +119,27 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
     attendeeIds: []
   });
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [attendeeQuery, setAttendeeQuery] = useState("");
 
+  const close = () => {
+    if (!busyRef.current) onClose();
+  };
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const filteredPeople = people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(attendeeQuery.toLowerCase())
   );
+  const allVisibleSelected = filteredPeople.length > 0
+    && filteredPeople.every((person) => form.attendeeIds.includes(person.id));
+  const toggleVisibleAttendees = () => {
+    const visibleIds = new Set(filteredPeople.map((person) => person.id));
+    update(
+      "attendeeIds",
+      allVisibleSelected
+        ? form.attendeeIds.filter((id) => !visibleIds.has(id))
+        : [...new Set([...form.attendeeIds, ...visibleIds])]
+    );
+  };
   const toggleAttendee = (personId) =>
     update(
       "attendeeIds",
@@ -158,6 +173,7 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
 
   async function submit(event) {
     event.preventDefault();
+    if (busyRef.current) return;
     const startsDate = fromDateParts(startParts);
     const endsDate = fromDateParts(endParts);
 
@@ -166,21 +182,26 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
       return;
     }
 
+    busyRef.current = true;
     setBusy(true);
     try {
+      setErrorMessage("");
       await onSave({
         ...form,
         location: form.location.trim() || "LuxSyncspace meeting",
         startsAt: startsDate.toISOString(),
         endsAt: endsDate.toISOString()
       });
+    } catch (error) {
+      setErrorMessage(error.message || "Unable to schedule this event. Please try again.");
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   return (
-    <Modal title="Schedule an event" subtitle="Bring the right people together" onClose={onClose} className="schedule-event-modal">
+    <Modal title="Schedule an event" subtitle="Bring the right people together" onClose={close} className="schedule-event-modal">
       <form className="event-form schedule-event-form" onSubmit={submit}>
         <label>
           <span>Event title</span>
@@ -243,7 +264,9 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
         <div className="group-members-field">
           <div className="group-members-label">
             <span>Invite employees</span>
-            <small>{form.attendeeIds.length} selected</small>
+            <button type="button" onClick={toggleVisibleAttendees} disabled={!filteredPeople.length}>
+              {allVisibleSelected ? "Clear selection" : "Select all"}
+            </button>
           </div>
           <label className="group-member-search">
             <Search size={16} />
@@ -287,7 +310,7 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
           />
         </label>
         <footer className="modal-actions">
-          <button type="button" className="button button-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="button button-secondary" onClick={close} disabled={busy}>Cancel</button>
           <button className="button button-primary" disabled={busy}>
             <CalendarPlus size={17} /> {busy ? "Scheduling…" : "Schedule event"}
           </button>
