@@ -439,7 +439,15 @@ export default function App() {
   if (meetingId) {
     const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
     return <>
-      <MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onEndMeeting={endMeetingForEveryone} onToast={setToast} />
+      <MeetingRoom
+        meeting={meeting}
+        user={user}
+        people={data.people}
+        onInvite={(attendeeIds) => addMeetingAttendees(meeting, attendeeIds)}
+        onLeave={leaveMeeting}
+        onEndMeeting={endMeetingForEveryone}
+        onToast={setToast}
+      />
       <NotificationBridge
         user={user}
         channels={data.channels}
