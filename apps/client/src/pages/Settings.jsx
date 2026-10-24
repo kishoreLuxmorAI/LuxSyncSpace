@@ -34,7 +34,7 @@ function appIsInstalled() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 }
 
-export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onStartTutorial }) {
+export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onStartTutorial, onChangePassword }) {
   const [tab, setTab] = useState("profile");
   const [selected, setSelected] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -260,6 +260,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
         </aside>
         <section className="settings-content panel">
           {tab === "profile" && <><ProfileDetails person={user} heading="My employee profile" />
+            <div className="profile-password-action"><div><b>Password</b><small>Update your password or recover access using a verification code.</small></div><button className="button button-secondary" onClick={onChangePassword}><KeyRound size={16} /> Change password</button></div>
             <form className="privacy-settings" onSubmit={savePrivacy}>
               <header><div><ShieldCheck size={19} /></div><span><h3>Directory privacy</h3><p>Control the identity coworkers see. HR and senior administrators can still view official account details.</p></span></header>
               <label className="privacy-toggle"><span><b>Use a display name</b><small>Hide your full legal name from the employee directory and show the name below instead.</small></span><input type="checkbox" checked={privacy.hideFullName} onChange={(event) => setPrivacy({ ...privacy, hideFullName: event.target.checked })} /></label>
