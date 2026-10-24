@@ -16,7 +16,7 @@ import { workspaceRouter } from "./routes/workspace.js";
 import { provisioningRouter } from "./routes/provisioning.js";
 import { startEventReminderScheduler } from "./services/eventReminders.js";
 import { sql } from "./db/client.js";
-import { cached } from "./services/cache.js";
+import { cached, invalidateCache } from "./services/cache.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -59,6 +59,44 @@ app.get("/api/health", (_req, res) => res.json({
 app.use("/api/provisioning", provisioningRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", workspaceRouter);
+
+async function updateMeetingAvailability(socket, joining) {
+  const userRoom = `user:${socket.auth.userId}`;
+  const otherMeetingSocket = (await io.in(userRoom).fetchSockets())
+    .find((participant) => participant.id !== socket.id && participant.data.meetingRoom);
+  if (!joining && otherMeetingSocket) return;
+
+  if (joining && !socket.data.meetingAvailabilityBefore) {
+    if (otherMeetingSocket?.data.meetingAvailabilityBefore) {
+      socket.data.meetingAvailabilityBefore = otherMeetingSocket.data.meetingAvailabilityBefore;
+    } else {
+      const [current] = await sql`
+        SELECT presence, availability_status FROM users
+        WHERE id = ${socket.auth.userId} AND organization_id = ${socket.auth.organizationId}
+      `;
+      if (!current) throw new Error("Meeting participant account not found");
+      socket.data.meetingAvailabilityBefore = {
+        presence: current.presence,
+        availabilityStatus: current.availability_status
+      };
+    }
+  }
+
+  const previous = socket.data.meetingAvailabilityBefore;
+  if (!joining && !previous) throw new Error("Meeting availability state is missing");
+  const availabilityStatus = joining ? "meeting" : previous.availabilityStatus;
+  const presence = joining ? "away" : previous.presence;
+  const [updated] = await sql`
+    UPDATE users SET availability_status = ${availabilityStatus}, presence = ${presence}
+    WHERE id = ${socket.auth.userId} AND organization_id = ${socket.auth.organizationId}
+    RETURNING id, presence, availability_status
+  `;
+  if (!updated) throw new Error("Meeting participant account not found");
+  if (!joining) socket.data.meetingAvailabilityBefore = null;
+
+  invalidateCache(`people:${socket.auth.organizationId}`);
+  io.to(`org:${socket.auth.organizationId}`).emit("presence:updated", updated);
+}
 
 io.use(async (socket, next) => {
   try {
@@ -113,7 +151,9 @@ io.on("connection", (socket) => {
       }
       const room = `meeting:${meeting.id}`;
       const existingSockets = await io.in(room).fetchSockets();
+      await updateMeetingAvailability(socket, true);
       socket.meetingRoom = room;
+      socket.data.meetingRoom = room;
       socket.data.meetingProfile = profile;
       socket.join(room);
       acknowledge({
@@ -153,15 +193,22 @@ io.on("connection", (socket) => {
     if (socket.meetingRoom) socket.to(socket.meetingRoom).emit("meeting:hand", { socketId: socket.id, raised: Boolean(raised) });
   });
 
-  socket.on("meeting:leave", () => {
+  async function leaveMeeting() {
     if (!socket.meetingRoom) return;
-    socket.to(socket.meetingRoom).emit("meeting:user-left", { socketId: socket.id });
-    socket.leave(socket.meetingRoom);
+    const room = socket.meetingRoom;
     socket.meetingRoom = null;
+    socket.data.meetingRoom = null;
+    socket.to(room).emit("meeting:user-left", { socketId: socket.id });
+    await socket.leave(room);
+    await updateMeetingAvailability(socket, false);
+  }
+
+  socket.on("meeting:leave", () => {
+    leaveMeeting().catch((error) => console.error("Meeting leave failed", error));
   });
 
   socket.on("disconnecting", () => {
-    if (socket.meetingRoom) socket.to(socket.meetingRoom).emit("meeting:user-left", { socketId: socket.id });
+    leaveMeeting().catch((error) => console.error("Meeting disconnect cleanup failed", error));
   });
 });
 startEventReminderScheduler(io);
