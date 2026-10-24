@@ -7,6 +7,10 @@ import { Modal } from "../components/Modal";
 
 const today = new Date().toISOString().slice(0, 10);
 
+function capitalizeName(value) {
+  return value.replace(/(^|\s)(\S)/g, (match) => match.toUpperCase());
+}
+
 const emptyInvite = () => ({
   fullName: "",
   employeeId: "",
@@ -282,7 +286,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           {tab === "invite" && canInvite && <>
             <header className="settings-section-head"><div><h2>Invite a new employee</h2><p>Create the account and email a one-time temporary password through ZeptoMail.</p></div></header>
             <form className="invite-settings-form event-form" onSubmit={createInvite}>
-              <div className="form-grid"><label><span>Employee name</span><input value={invite.fullName} onChange={(e) => setInvite({ ...invite, fullName: e.target.value })} placeholder="Full legal name" required /></label><label><span>Work email</span><input type="email" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} placeholder="employee@company.com" required /></label></div>
+              <div className="form-grid"><label><span>Employee name</span><input value={invite.fullName} onChange={(e) => setInvite({ ...invite, fullName: capitalizeName(e.target.value) })} placeholder="Full legal name" required /></label><label><span>Work email</span><input type="email" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} placeholder="employee@company.com" required /></label></div>
               <label><span>Employee ID</span><input value={invite.employeeId} onChange={(e) => setInvite({ ...invite, employeeId: e.target.value.toUpperCase() })} placeholder="e.g. LUX-1002 (leave blank to generate automatically)" pattern="[A-Za-z0-9-]{3,30}" /></label>
               <label><span>Designation</span><input value={invite.title} onChange={(e) => setInvite({ ...invite, title: e.target.value })} placeholder="e.g. Software Engineer" required /></label>
               <div className="form-grid"><label><span>Department</span><input value={invite.department} onChange={(e) => setInvite({ ...invite, department: e.target.value })} required /></label><label><span>Access role</span><select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr">HR</option></select></label></div>
@@ -348,8 +352,10 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
         </section>
       </div>
       {selected && !editing && !pendingDelete && <Modal title="Employee profile" subtitle={selected.employee_id} onClose={() => setSelected(null)}><div className="profile-modal"><ProfileDetails person={selected} />{(canEditEmployee(selected) || canDeleteEmployee(selected)) && <div className="employee-profile-actions">{canDeleteEmployee(selected) && <button className="button button-danger" onClick={() => setPendingDelete(selected)}><UserX size={16} /> Delete employee</button>}{canEditEmployee(selected) && <button className="button button-primary" onClick={() => startEditing(selected)}><Pencil size={16} /> Edit details</button>}</div>}</div></Modal>}
-      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => { setEditing(null); setSelected(null); }}>        <form className="event-form" onSubmit={updateEmployee}>
-          <div className="form-grid"><label><span>Employee name</span><input value={editing.fullName} onChange={(e) => setEditing({ ...editing, fullName: e.target.value })} required /></label><label><span>Work email</span><input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} required /></label></div>
+      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => { setEditing(null); setSelected(null); }}>
+        <div className="profile-hero"><Avatar person={{ ...selected, full_name: editing.fullName }} size="xl" /><div><h2>{editing.fullName}</h2><p>Profile initials preview</p></div></div>
+        <form className="event-form" onSubmit={updateEmployee}>
+          <div className="form-grid"><label><span>Employee name</span><input value={editing.fullName} onChange={(e) => setEditing({ ...editing, fullName: capitalizeName(e.target.value) })} required /></label><label><span>Work email</span><input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} required /></label></div>
           <div className="form-grid"><label><span>Employee ID</span><input value={editing.employeeId} onChange={(e) => setEditing({ ...editing, employeeId: e.target.value.toUpperCase() })} pattern="[A-Za-z0-9-]{3,30}" required /></label><label><span>Designation</span><input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} required /></label></div>
           <div className="form-grid"><label><span>Department</span><input value={editing.department} onChange={(e) => setEditing({ ...editing, department: e.target.value })} required /></label><label><span>Access role</span><select value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr" disabled={user.role === "manager"}>HR</option>{user.role === "senior_leader" && <option value="senior_leader">Senior leader</option>}</select></label></div>
           <div className="form-grid"><label><span>Phone number</span><input type="tel" inputMode="numeric" value={editing.phone} onChange={(e) => setEditing({ ...editing, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="10-digit mobile number" maxLength={10} pattern="\d{10}" title="Please enter a 10-digit phone number" /></label><label><span>Work location</span><input value={editing.location} onChange={(e) => setEditing({ ...editing, location: e.target.value })} /></label></div>
