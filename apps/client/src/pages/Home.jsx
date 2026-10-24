@@ -8,7 +8,7 @@ import { dateHeading, eventTime } from "../lib/format";
 export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJoinMeeting, onStartMeeting }) {
   const [announcementOpen, setAnnouncementOpen] = useState(false);
   const nextEvents = data.events.slice(0, 3);
-  const online = data.people.filter((p) => p.presence === "online");
+  const online = data.people.filter((p) => p.presence === "online" || p.availability_status === "meeting");
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const canAnnounce = ["hr", "senior_leader"].includes(user.role);
