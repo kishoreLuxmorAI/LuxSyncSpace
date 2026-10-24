@@ -7,6 +7,8 @@ import { dateHeading, eventTime } from "../lib/format";
 
 export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJoinMeeting, onStartMeeting }) {
   const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const nextEvents = data.events.slice(0, 3);
+  const online = data.people.filter((p) => p.presence === "online" || p.availability_status === "meeting");
   const nextEvents = data.events.filter((event) => !event.cancelled_at && !event.ended_at).slice(0, 4);
   const online = data.people.filter((p) => p.presence === "online");
   const hour = new Date().getHours();
