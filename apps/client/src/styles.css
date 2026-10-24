@@ -663,7 +663,9 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .group-members-modal .event-form { min-height: 0; overflow-y: auto; }
 .group-members-field { display: grid; gap: 8px; }
 .group-members-label { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; }
-.group-members-label small { color: var(--blue); background: var(--blue-soft); padding: 3px 7px; border-radius: 10px; }
+.group-members-label button { border: 0; padding: 2px 0; background: transparent; color: var(--blue); font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.group-members-label button:hover:not(:disabled) { text-decoration: underline; }
+.group-members-label button:disabled { color: var(--muted); cursor: default; }
 .group-member-search { height: 38px; border: 1px solid #dce2ea; border-radius: 8px; padding: 0 10px; display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 8px !important; color: #8792a3; background: #fbfcfd; }
 .group-member-search input { min-width: 0; height: 100%; border: 0 !important; box-shadow: none !important; padding: 0 !important; background: transparent !important; }
 .group-member-list { min-height: 0; max-height: min(45vh, 360px); max-height: min(45dvh, 360px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border: 1px solid var(--line); border-radius: 8px; padding: 5px; display: grid; align-content: start; gap: 3px; }
