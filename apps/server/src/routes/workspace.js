@@ -103,7 +103,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           FROM users u LEFT JOIN users m ON m.id = u.manager_id
           WHERE u.organization_id = ${organizationId} ORDER BY u.full_name`),
       cached(`channel-memberships:${organizationId}`, 10_000, () => sql`
-          SELECT c.id, c.name, c.description, c.is_private, c.created_by, m.muted, m.user_id,
+          SELECT c.id, c.name, c.description, c.is_private, c.created_at, c.created_by, m.muted, m.user_id,
              COALESCE(message_stats.message_count, 0)::int AS message_count
           FROM channels c
           JOIN channel_members m ON m.channel_id = c.id
