@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Pencil, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Pencil, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, authStore, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
@@ -47,6 +47,13 @@ function computeOptimisticReactions(currentReactions = [], emoji) {
   return list;
 }
 
+function formatGroupCreatedDate(value) {
+  if (!value) return "Unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unavailable";
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" }).format(date);
+}
+
 export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
@@ -64,6 +71,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [createGroup, setCreateGroup] = useState(false);
   const [manageMembers, setManageMembers] = useState(false);
+  const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
   const [membersExpanded, setMembersExpanded] = useState(false);
   const [channelMembers, setChannelMembers] = useState([]);
   const [channelMuted, setChannelMutedState] = useState(() => channels.find((channel) => channel.id === initialChannelId)?.muted || false);
@@ -154,6 +162,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     setMessageSearch("");
     setMessageSearchOpen(false);
     setMoreOpen(false);
+    setGroupDetailsOpen(false);
     setMessageMenuId(null);
     setReactionMessageId(null);
     setFullPickerMessageId(null);
@@ -813,11 +822,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
             <div><button className="mobile-conversation-back" onClick={() => closeConversation()} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p>{selectedPerson && <small className="conversation-employee-id">Employee ID: {employeeIdLabel(selectedPerson)}</small>}</span></div>
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
-              {selected && <button className="members-button" onClick={() => setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
               {selected && canCreateGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
               {!selectedPerson && <>
-                <button className="icon-button"><Bell size={19} /></button>
-                <button className="icon-button"><Info size={19} /></button>
+                <button className="icon-button" onClick={() => setGroupDetailsOpen(true)} title="Group details" aria-label="Group details"><Info size={19} /></button>
               </>}
             </div>
           </header>
@@ -963,7 +970,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         <div className="details-channel-icon"><Hash size={25} /></div>
         <h3>{activeChannel?.name}</h3><p>{activeChannel?.description}</p>
         <div className="detail-actions">
-          <button className={channelMuted ? "active" : ""} onClick={toggleMute}><Bell size={18} /><span>{channelMuted ? "Unmute" : "Mute"}</span></button>
+          <button className={channelMuted ? "active" : ""} onClick={toggleMute}>{channelMuted ? <BellOff size={18} /> : <Bell size={18} />}<span>{channelMuted ? "Unmute" : "Mute"}</span></button>
           <button className={messageSearchOpen ? "active" : ""} onClick={() => setMessageSearchOpen((open) => !open)}><Search size={18} /><span>Search</span></button>
           <div className="channel-more-wrap"><button className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
             {moreOpen && <div className="channel-more-menu">
@@ -987,6 +994,26 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       </aside>}
       {createGroup && <CreateGroup people={people.filter((person) => person.id !== user.id)} onCreate={submitGroup} onClose={() => setCreateGroup(false)} />}
       {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} canManage={canCreateGroup} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
+      {groupDetailsOpen && selected && activeChannel && <Modal title="Group details" subtitle={activeChannel.name} onClose={() => setGroupDetailsOpen(false)}>
+        <div className="group-details-content">
+          <div className="group-details-facts">
+            <div><span>Group Name</span><strong>{activeChannel.name}</strong></div>
+            <div><span>Created Date</span><strong>{formatGroupCreatedDate(activeChannel.created_at)}</strong></div>
+            <div><span>Total Members</span><strong>{channelMembers.length}</strong></div>
+            <div><span>Group Type</span><strong>{activeChannel.is_private ? "Private" : "Public"}</strong></div>
+          </div>
+          <section className="group-details-description">
+            <h3>Description</h3>
+            <p>{activeChannel.description || "No group description has been added."}</p>
+          </section>
+          <section className="group-details-member-section" aria-label="Group members">
+            <h3><Users size={16} /> Members</h3>
+            {channelMembers.length ? <div className="group-details-members">
+              {channelMembers.map((person) => <div key={person.id}><Avatar person={person} size="sm" showPresence /><span><b>{person.full_name}</b><small>{person.title || person.department || "Member"}</small></span></div>)}
+            </div> : <p className="group-details-empty">No members found.</p>}
+          </section>
+        </div>
+      </Modal>}
       {forwardingMessage && <ForwardMessageModal message={forwardingMessage} channels={channels} people={people.filter((person) => person.id !== user.id)} onForward={forwardMessage} onClose={() => setForwardingMessage(null)} />}
       {deleteGroupOpen && activeChannel && <Modal title="Delete group" subtitle={`Permanently remove #${activeChannel.name}`} onClose={() => setDeleteGroupOpen(false)}>
         <div className="delete-confirm"><span><Trash2 size={24} /></span><h3>Delete #{activeChannel.name}?</h3><p>All messages, attachments, and membership records in this group will be permanently deleted. This cannot be recovered.</p><footer><button className="button button-secondary" onClick={() => setDeleteGroupOpen(false)}>Cancel</button><button className="button button-danger" onClick={deleteGroup}><Trash2 size={16} /> Delete group</button></footer></div>

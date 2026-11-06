@@ -427,6 +427,22 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .details-members > div { display: flex; gap: 8px; text-align: left; align-items: center; }
 .details-members span { display: grid; gap: 2px; min-width: 0; }.details-members b { font-size: 9px; }.details-members small { color: #8b95a5; font-size: 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .manage-members-button { width: 100%; margin-top: 16px; }
+.group-details-content { padding: 18px 20px 20px; }
+.group-details-description { margin: 16px 0 0; }
+.group-details-description h3 { margin: 0 0 6px; color: var(--navy); font-size: 11px; }
+.group-details-description p { margin: 0; color: #647188; font-size: 12px; line-height: 1.55; }
+.group-details-facts { padding: 12px 14px; border: 1px solid var(--soft-line); border-radius: 9px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.group-details-facts > div { display: grid; gap: 4px; }
+.group-details-facts span { color: #8490a1; font-size: 10px; }
+.group-details-facts strong { color: var(--navy); font-size: 12px; }
+.group-details-member-section { margin-top: 20px; }
+.group-details-member-section h3 { margin: 0 0 12px; color: var(--navy); display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.group-details-members { max-height: min(38vh, 300px); overflow-y: auto; display: grid; gap: 12px; }
+.group-details-members > div { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.group-details-members > div > span:last-child { min-width: 0; display: grid; gap: 3px; }
+.group-details-members b { overflow: hidden; color: var(--navy); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.group-details-members small { overflow: hidden; color: #8490a1; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.group-details-empty { margin: 0; color: #8490a1; font-size: 11px; }
 .member-manager-list > button:disabled { cursor: default; opacity: .78; }
 .member-manager-list > button { grid-template-columns: 32px minmax(0, 1fr) 82px; }
 .member-change-summary { display: flex; gap: 7px; }
