@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarPlus, Check, Clock, MapPin, Search, Send } from "lucide-react";
 import { Modal } from "./Modal";
 import { Avatar } from "./Avatar";
@@ -122,9 +122,17 @@ export function NewEvent({ people, onSave, onClose, initialData }) {
   const busyRef = useRef(false);
   const [attendeeQuery, setAttendeeQuery] = useState("");
 
-  const close = () => {
+  const close = useCallback(() => {
     if (!busyRef.current) onClose();
-  };
+  }, [onClose]);
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") close();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [close]);
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const filteredPeople = people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(attendeeQuery.toLowerCase())
