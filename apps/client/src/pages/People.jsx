@@ -1,5 +1,5 @@
 import { Building2, Check, Copy, Grid2X2, List, MessageSquareText, MoreHorizontal, Pencil, Search, SlidersHorizontal, UserCheck, UserMinus, UserPlus, Users, UserX } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
 import { api } from "../lib/api";
@@ -14,6 +14,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
   const [menuId, setMenuId] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [busy, setBusy] = useState(false);
+  const peopleFilterRef = useRef(null);
   const departments = ["All", ...new Set(people.map((p) => p.department))];
   const filtered = useMemo(() => people.filter((person) =>
     (department === "All" || person.department === department) &&
@@ -28,6 +29,17 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
     if (filtersOpen) setFiltersOpen(false);
     else setMenuId(null);
   }, filtersOpen || menuId !== null);
+
+  useEffect(() => {
+    if (!filtersOpen) return undefined;
+    function handleClickOutside(event) {
+      if (peopleFilterRef.current && !peopleFilterRef.current.contains(event.target)) {
+        setFiltersOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [filtersOpen]);
 
   async function updateEmployment() {
     if (!pendingAction) return;
@@ -65,7 +77,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
         <div className="directory-tools">
           <label className="section-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people by name, role, or team" /></label>
           <select value={department} onChange={(e) => setDepartment(e.target.value)}><option value="All">All departments</option>{departments.slice(1).map((item) => <option key={item}>{item}</option>)}</select>
-          <div className="people-filter">
+          <div className="people-filter" ref={peopleFilterRef}>
             <button className={`icon-button${employmentStatus !== "All" ? " active" : ""}`} onClick={() => setFiltersOpen((open) => !open)} aria-label="Filter people" aria-expanded={filtersOpen} aria-controls="people-filter-options" title="Filter people"><SlidersHorizontal size={19} /></button>
             {filtersOpen && <div className="people-filter-menu" id="people-filter-options" aria-label="Filter by employment status">
               <b>Employment status</b>
