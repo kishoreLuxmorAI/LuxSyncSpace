@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { api } from "../lib/api";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 const nav = [
   ["home", "Home", LayoutDashboard],
@@ -39,6 +40,21 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
   const statusBtnRef = useRef();
   const profileMenuRef = useRef();
   const profileBtnRef = useRef();
+
+  useEscapeKey(() => {
+    if (results) {
+      setResults(null);
+      setQuery("");
+    } else if (notificationsOpen) {
+      setNotificationsOpen(false);
+    } else if (statusOpen) {
+      setStatusOpen(false);
+    } else if (profileOpen) {
+      setProfileOpen(false);
+    } else if (mobileOpen) {
+      setMobileOpen(false);
+    }
+  }, Boolean(results || notificationsOpen || statusOpen || profileOpen || mobileOpen));
 
   useEffect(() => {
     function handleClickOutside(event) {
