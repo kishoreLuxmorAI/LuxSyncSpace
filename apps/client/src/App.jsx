@@ -300,7 +300,7 @@ export default function App() {
       setData((current) => ({
         ...current,
         events: current.events.map((item) => item.id === event.id
-          ? { ...item, ...result.event, cancelled_at: result.event?.cancelled_at || optimisticCancelledAt }
+          ? { ...item, ...result.event }
           : item)
       }));
       setToast(result.message);
@@ -348,13 +348,6 @@ export default function App() {
       ? { ...current, channels: current.channels.map((channel) => channel.id === id ? { ...channel, unread_count: 0 } : channel) }
       : { ...current, directUnreadCounts: { ...current.directUnreadCounts, [id]: 0 } }
     );
-  }, []);
-
-  const handleEventCancelled = useCallback((eventId) => {
-    setData((current) => ({
-      ...current,
-      events: current.events.map((e) => e.id === eventId ? { ...e, cancelled_at: new Date().toISOString() } : e)
-    }));
   }, []);
 
   const updatePresence = useCallback((presence) => {
@@ -467,7 +460,6 @@ export default function App() {
         onNotification={receiveNotification}
         onChatMessage={receiveChatMessage}
         onPresenceUpdate={updatePresence}
-        onEventCancelled={handleEventCancelled}
         onMeetingEnded={(endedEvent) => {
           if (endedEvent?.event_id === meetingId) {
             const isCall = Boolean(endedEvent?.isCall || meeting.title?.includes(" and ") || (meeting.title || "").toLowerCase().includes("call"));
@@ -495,7 +487,7 @@ export default function App() {
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "change-password", "help"].includes(active) && <Home {...pageProps} />}
       </Shell>
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} onEventCancelled={handleEventCancelled} />
+      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
       <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onOpen={() => openNotification(notification)} onClose={() => setNotification(null)} />
       {!tutorialOpen && <NotificationSetupPrompt onToast={setToast} />}

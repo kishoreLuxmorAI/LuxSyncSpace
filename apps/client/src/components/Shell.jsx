@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell, CalendarDays, Check, CheckCheck, ChevronDown, CircleHelp, LayoutDashboard,
   Menu, MessageSquareText, Search, Settings, Users, Video, X
 } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { api } from "../lib/api";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 const nav = [
   ["home", "Home", LayoutDashboard],
@@ -31,7 +32,6 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
   const [statusOpen, setStatusOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(null);
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const searchRef = useRef();
   const searchContainerRef = useRef();
   const notificationsMenuRef = useRef();
@@ -40,6 +40,21 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
   const statusBtnRef = useRef();
   const profileMenuRef = useRef();
   const profileBtnRef = useRef();
+
+  useEscapeKey(() => {
+    if (results) {
+      setResults(null);
+      setQuery("");
+    } else if (notificationsOpen) {
+      setNotificationsOpen(false);
+    } else if (statusOpen) {
+      setStatusOpen(false);
+    } else if (profileOpen) {
+      setProfileOpen(false);
+    } else if (mobileOpen) {
+      setMobileOpen(false);
+    }
+  }, Boolean(results || notificationsOpen || statusOpen || profileOpen || mobileOpen));
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -82,63 +97,16 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [notificationsOpen, statusOpen, profileOpen, results]);
 
-  const searchItems = useMemo(() => {
-    if (!results) return [];
-    const list = [];
-    if (results.people?.length) {
-      results.people.forEach((p) => list.push({ type: "person", item: p, view: "chat", opts: { direct: p.id } }));
-    }
-    if (results.channels?.length) {
-      results.channels.forEach((c) => list.push({ type: "channel", item: c, view: "chat", opts: { channel: c.id } }));
-    }
-    return list;
-  }, [results]);
-
-  const executeSearch = useCallback((searchTerm, shouldOpenFirst = false) => {
-    const raw = searchTerm !== undefined ? searchTerm : query;
-    const q = raw.trim().replace(/^#\s*/, "");
+  const executeSearch = useCallback((searchTerm) => {
+    const q = (searchTerm !== undefined ? searchTerm : query).trim();
     if (!q) {
       setResults(null);
-      setSelectedIndex(0);
       return;
     }
     api(`/search?q=${encodeURIComponent(q)}`)
-      .then((data) => {
-        const res = data || { people: [], channels: [] };
-        setResults(res);
-        setSelectedIndex(0);
-        if (shouldOpenFirst) {
-          if (res.channels?.length) {
-            const exact = res.channels.find((c) => c.name.toLowerCase() === q.toLowerCase()) || res.channels[0];
-            navigate("chat", { channel: exact.id });
-            setResults(null);
-            setQuery("");
-            setSelectedIndex(0);
-            searchRef.current?.blur();
-          } else if (res.people?.length) {
-            const exact = res.people.find((p) => p.full_name.toLowerCase().includes(q.toLowerCase())) || res.people[0];
-            navigate("chat", { direct: exact.id });
-            setResults(null);
-            setQuery("");
-            setSelectedIndex(0);
-            searchRef.current?.blur();
-          }
-        }
-      })
-      .catch(() => {
-        setResults({ people: [], channels: [] });
-        setSelectedIndex(0);
-      });
+      .then((data) => setResults(data || { people: [], channels: [] }))
+      .catch(() => setResults({ people: [], channels: [] }));
   }, [query]);
-
-  function openSearchResult(target) {
-    if (!target) return;
-    navigate(target.view, target.opts);
-    setResults(null);
-    setQuery("");
-    setSelectedIndex(0);
-    searchRef.current?.blur();
-  }
 
   useEffect(() => {
     if (query.trim().length < 2) { setResults(null); return; }
@@ -202,12 +170,7 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
             role="search"
             onSubmit={(e) => {
               e.preventDefault();
-              if (searchItems.length > 0) {
-                const target = searchItems[selectedIndex] || searchItems[0];
-                openSearchResult(target);
-                return;
-              }
-              executeSearch(query, true);
+              executeSearch();
             }}
           >
             <Search size={18} />
@@ -216,27 +179,11 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "ArrowDown") {
-                  if (searchItems.length > 0) {
-                    e.preventDefault();
-                    setSelectedIndex((prev) => (prev + 1 < searchItems.length ? prev + 1 : 0));
-                  }
-                } else if (e.key === "ArrowUp") {
-                  if (searchItems.length > 0) {
-                    e.preventDefault();
-                    setSelectedIndex((prev) => (prev > 0 ? prev - 1 : searchItems.length - 1));
-                  }
-                } else if (e.key === "Enter") {
+                if (e.key === "Enter") {
                   e.preventDefault();
-                  if (searchItems.length > 0) {
-                    const target = searchItems[selectedIndex] || searchItems[0];
-                    openSearchResult(target);
-                    return;
-                  }
-                  executeSearch(query, true);
+                  executeSearch();
                 } else if (e.key === "Escape") {
                   setResults(null);
-                  setSelectedIndex(0);
                 }
               }}
               placeholder="Search people, messages, and channels"
@@ -244,8 +191,6 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
             {results && (
               <SearchResults
                 results={results}
-                selectedIndex={selectedIndex}
-                onSelectIndex={setSelectedIndex}
                 onNavigate={(view, opts) => {
                   navigate(view, opts);
                   setResults(null);
@@ -396,61 +341,16 @@ export function Shell({ user, active, setActive, children, onLogout, onStatusCha
   );
 }
 
-function SearchResults({ results, selectedIndex = 0, onSelectIndex, onNavigate, onClose }) {
+function SearchResults({ results, onNavigate, onClose }) {
   const people = results.people || [];
   const channels = results.channels || [];
   const empty = !people.length && !channels.length;
-  let runningIndex = 0;
-
   return (
     <div className="search-results">
-      <div className="search-results-head">
-        <span>Search results</span>
-        <button type="button" onClick={onClose}><X size={15} /></button>
-      </div>
+      <div className="search-results-head"><span>Search results</span><button type="button" onClick={onClose}><X size={15} /></button></div>
       {empty && <p className="search-empty">No results found. Try another phrase.</p>}
-      {!!people.length && (
-        <section>
-          <small>PEOPLE</small>
-          {people.map((p) => {
-            const idx = runningIndex++;
-            const isSelected = idx === selectedIndex;
-            return (
-              <button
-                type="button"
-                className={isSelected ? "active" : ""}
-                onMouseEnter={() => onSelectIndex?.(idx)}
-                onClick={() => onNavigate("chat", { direct: p.id })}
-                key={p.id}
-              >
-                <Avatar person={p} size="xs" />
-                <span><b>{p.full_name}</b><em>{p.title}</em></span>
-              </button>
-            );
-          })}
-        </section>
-      )}
-      {!!channels.length && (
-        <section>
-          <small>CHANNELS</small>
-          {channels.map((c) => {
-            const idx = runningIndex++;
-            const isSelected = idx === selectedIndex;
-            return (
-              <button
-                type="button"
-                className={isSelected ? "active" : ""}
-                onMouseEnter={() => onSelectIndex?.(idx)}
-                onClick={() => onNavigate("chat", { channel: c.id })}
-                key={c.id}
-              >
-                <MessageSquareText size={17} />
-                <span><b># {c.name}</b><em>{c.description}</em></span>
-              </button>
-            );
-          })}
-        </section>
-      )}
+      {!!people.length && <section><small>PEOPLE</small>{people.map((p) => <button type="button" onClick={() => onNavigate("chat", { direct: p.id })} key={p.id}><Avatar person={p} size="xs" /><span><b>{p.full_name}</b><em>{p.title}</em></span></button>)}</section>}
+      {!!channels.length && <section><small>CHANNELS</small>{channels.map((c) => <button type="button" onClick={() => onNavigate("chat", { channel: c.id })} key={c.id}><MessageSquareText size={17} /><span><b># {c.name}</b><em>{c.description}</em></span></button>)}</section>}
     </div>
   );
 }
