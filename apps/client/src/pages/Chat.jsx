@@ -136,9 +136,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     onSelectConversation?.({ channel: null, direct: person.id });
   }
 
-  function closeConversation(useHistory = true) {
-    const params = new URLSearchParams(window.location.search);
-    if (useHistory && (params.has("channel") || params.has("direct"))) return window.history.back();
+  function closeConversation() {
     setSelected(null);
     setSelectedPerson(null);
     appliedInitialChannelRef.current = null;
@@ -146,7 +144,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     const url = new URL(window.location.href);
     url.searchParams.delete("channel");
     url.searchParams.delete("direct");
-    window.history.replaceState({ luxsyncspace: true, view: "chat" }, "", url);
+    window.history.pushState({ luxsyncspace: true, view: "chat" }, "", url);
     onSelectConversation?.({ channel: null, direct: null });
   }
   const filteredPeople = useMemo(() => people.filter((person) =>
@@ -797,7 +795,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
           <nav className="chat-nav">
             <button className={!selected && !selectedPerson ? "active" : ""} onClick={() => closeConversation()}><Users size={18} /> All employees <b>{people.length}</b></button>
           </nav>
-          <div className="channel-heading"><span>GROUPS & CHANNELS</span>{canCreateGroup && <button onClick={() => setCreateGroup(true)}><Plus size={15} /></button>}</div>
+          <div className="channel-heading"><span>GROUPS & CHANNELS</span></div>
           <nav className="channels">
             {channels.map((channel) => <button key={channel.id} onClick={() => openChannel(channel.id)} className={selected === channel.id ? "active" : ""}>{channel.is_private ? <Lock size={16} /> : <Hash size={17} />}<span>{channel.name}</span><UnreadBadge count={channel.unread_count} /></button>)}
           </nav>
