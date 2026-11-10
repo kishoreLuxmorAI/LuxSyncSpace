@@ -215,8 +215,10 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .search-results-head { padding: 7px 8px 9px; display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: #687489; }
 .search-results-head button { border: 0; background: none; color: #8993a4; }
 .search-results section > small { display: block; padding: 10px 8px 5px; font-weight: 700; letter-spacing: .1em; color: #9aa3b2; font-size: 9px; }
-.search-results section > button { border: 0; background: white; width: 100%; min-height: 48px; display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; text-align: left; }
-.search-results section > button:hover { background: #f5f7fb; }
+.search-results section > button { border: 0; background: white; width: 100%; min-height: 48px; display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; text-align: left; cursor: pointer; transition: background 0.15s ease; }
+.search-results section > button:hover,
+.search-results section > button:focus,
+.search-results section > button.active { background: #eef3ff; outline: none; }
 .search-results section button > span { display: grid; gap: 2px; min-width: 0; }
 .search-results b { font-size: 12px; }
 .search-results em { color: #7a8597; font-size: 10px; font-style: normal; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -262,6 +264,8 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .people-strip small { font-size: 9px; color: #8992a1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
 .empty-compact { padding: 28px; color: #8b95a6; display: flex; gap: 10px; align-items: center; font-size: 12px; }
 .announcements-panel { margin-bottom: 16px; }
+.announcements-list { display: grid; grid-template-columns: repeat(3, 1fr); }
+.announcements-list article { min-width: 0; padding: 18px; display: flex; gap: 11px; border-right: 1px solid var(--soft-line); }
 .announcement-actions { display: flex; align-items: center; gap: 10px; }
 .announcements-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 112px; max-height: 336px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #c8d0dc transparent; }
 .announcements-list::-webkit-scrollbar { width: 6px; }
@@ -921,7 +925,6 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .people-strip { grid-template-columns: repeat(3, 1fr); }
   .people-strip button:nth-child(n+4) { display: none; }
   .panel-header .link-button { font-size: 0; }.panel-header .link-button svg { width: 18px; height: 18px; }
-  .panel-header .announcement-actions .announcement-toggle { font-size: 11px; }
   .chat-page { display: block; height: calc(100vh - 132px); }
   .chat-sidebar { display: none; }
   .conversation { height: 100%; }

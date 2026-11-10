@@ -136,7 +136,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
              u.initials AS author_initials, u.avatar_color AS author_color
           FROM announcements a JOIN users u ON u.id = a.author_id
           WHERE a.organization_id = ${organizationId}
-          ORDER BY a.published_at DESC`),
+          ORDER BY a.published_at DESC LIMIT 20`),
       sql`SELECT member.channel_id, COUNT(message.id)::int AS unread_count
           FROM channel_members member
           LEFT JOIN channel_messages message ON message.channel_id = member.channel_id
@@ -631,7 +631,6 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
       INSERT INTO invitations (organization_id, token, email, role, department, created_by, expires_at)
       VALUES (${req.auth.organizationId}, ${token}, ${input.email}, ${input.role}, ${input.department}, ${req.auth.userId}, NOW() + INTERVAL '1 day')
     `;
-    let emailSent = true;
     try {
       await sendEmployeeInvitation({
         to: input.email,
@@ -642,17 +641,12 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
         title: input.title
       });
     } catch (emailError) {
-      emailSent = false;
-      console.error("Could not deliver employee invitation email", emailError);
+      await sql`DELETE FROM users WHERE id = ${employee.id}`;
+      await sql`DELETE FROM invitations WHERE token = ${token}`;
+      throw Object.assign(new Error("Employee email could not be delivered. No account was created."), { status: 502, cause: emailError });
     }
     invalidateCache(`people:${req.auth.organizationId}`, "channel-memberships:", "socket-memberships:");
-    res.status(201).json({
-      employee,
-      emailSent,
-      message: emailSent
-        ? "Employee account created and invitation email sent"
-        : "Employee account created, but the invitation email could not be delivered. Restore email delivery before resetting the employee password and sending new credentials."
-    });
+    res.status(201).json({ employee, message: "Employee account created and invitation email sent" });
   } catch (error) {
     if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
     next(error);
@@ -1565,6 +1559,20 @@ workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
         tag: `event-cancelled-${eventId}`,
         url: "/?view=meetings"
       }).catch((error) => console.error("Could not send event cancellation push notification", error));
+    }
+    req.app.get("io")?.to(`user:${req.auth.userId}`).emit("event:cancelled", {
+      event_id: eventId,
+      title,
+      body,
+      tag: `event-cancelled-${eventId}`
+    });
+    if (event.organizer_id && event.organizer_id !== req.auth.userId) {
+      req.app.get("io")?.to(`user:${event.organizer_id}`).emit("event:cancelled", {
+        event_id: eventId,
+        title,
+        body,
+        tag: `event-cancelled-${eventId}`
+      });
     }
     req.app.get("io")?.to(`meeting:${eventId}`).emit("meeting:cancelled", { title, body });
     res.json({ event: cancelled, message: "Event cancelled and attendees notified" });
