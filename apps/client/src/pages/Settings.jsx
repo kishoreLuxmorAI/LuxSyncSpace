@@ -190,9 +190,9 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     setBusy(true);
     try {
       const result = await api("/invitations", { method: "POST", body: JSON.stringify(invite) });
-      await onRefresh();
       setInvite(emptyInvite());
       onToast(result.message || "Employee invitation email sent");
+      onRefresh().catch((error) => console.error("Could not refresh workspace after inviting employee", error));
     } catch (error) { onToast(error.message); }
     finally { setBusy(false); }
   }
