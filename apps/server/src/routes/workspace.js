@@ -527,6 +527,44 @@ workspaceRouter.post("/announcements", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+workspaceRouter.patch("/announcements/:announcementId", async (req, res, next) => {
+  try {
+    const announcementId = z.string().uuid().parse(req.params.announcementId);
+    const role = await currentRole(req.auth.userId);
+    if (!announcementRoles.has(role)) return res.status(403).json({ error: "Only HR and senior leaders can edit company announcements" });
+    const input = z.object({
+      title: z.string().trim().min(2).max(180),
+      body: z.string().trim().min(2).max(5000),
+      priority: z.enum(["normal", "important"])
+    }).parse(req.body);
+    const [announcement] = await sql`
+      UPDATE announcements
+      SET title = ${input.title}, body = ${input.body}, priority = ${input.priority}
+      WHERE id = ${announcementId} AND organization_id = ${req.auth.organizationId}
+      RETURNING id, title, body, priority, published_at
+    `;
+    if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+    invalidateCache(`announcements:${req.auth.organizationId}`);
+    res.json(announcement);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.delete("/announcements/:announcementId", async (req, res, next) => {
+  try {
+    const announcementId = z.string().uuid().parse(req.params.announcementId);
+    const role = await currentRole(req.auth.userId);
+    if (!announcementRoles.has(role)) return res.status(403).json({ error: "Only HR and senior leaders can delete company announcements" });
+    const [announcement] = await sql`
+      DELETE FROM announcements
+      WHERE id = ${announcementId} AND organization_id = ${req.auth.organizationId}
+      RETURNING id
+    `;
+    if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+    invalidateCache(`announcements:${req.auth.organizationId}`);
+    res.json({ id: announcement.id, message: "Company announcement deleted" });
+  } catch (error) { next(error); }
+});
+
 workspaceRouter.post("/invitations", async (req, res, next) => {
   try {
     const role = await currentRole(req.auth.userId);
