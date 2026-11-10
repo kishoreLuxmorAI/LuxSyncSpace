@@ -262,6 +262,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .people-strip small { font-size: 9px; color: #8992a1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
 .empty-compact { padding: 28px; color: #8b95a6; display: flex; gap: 10px; align-items: center; font-size: 12px; }
 .announcements-panel { margin-bottom: 16px; }
+.announcement-actions { display: flex; align-items: center; gap: 10px; }
 .announcements-list { display: grid; grid-template-columns: repeat(3, 1fr); }
 .announcements-list article { min-width: 0; padding: 18px; display: flex; gap: 11px; border-right: 1px solid var(--soft-line); }
 .announcements-list article:last-child { border-right: 0; }
@@ -912,6 +913,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .people-strip { grid-template-columns: repeat(3, 1fr); }
   .people-strip button:nth-child(n+4) { display: none; }
   .panel-header .link-button { font-size: 0; }.panel-header .link-button svg { width: 18px; height: 18px; }
+  .panel-header .announcement-actions .announcement-toggle { font-size: 11px; }
   .chat-page { display: block; height: calc(100vh - 132px); }
   .chat-sidebar { display: none; }
   .conversation { height: 100%; }

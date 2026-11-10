@@ -136,7 +136,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
              u.initials AS author_initials, u.avatar_color AS author_color
           FROM announcements a JOIN users u ON u.id = a.author_id
           WHERE a.organization_id = ${organizationId}
-          ORDER BY a.published_at DESC LIMIT 20`),
+          ORDER BY a.published_at DESC`),
       sql`SELECT member.channel_id, COUNT(message.id)::int AS unread_count
           FROM channel_members member
           LEFT JOIN channel_messages message ON message.channel_id = member.channel_id
