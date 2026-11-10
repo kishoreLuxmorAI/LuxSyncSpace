@@ -593,6 +593,7 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
       INSERT INTO invitations (organization_id, token, email, role, department, created_by, expires_at)
       VALUES (${req.auth.organizationId}, ${token}, ${input.email}, ${input.role}, ${input.department}, ${req.auth.userId}, NOW() + INTERVAL '1 day')
     `;
+    let emailSent = true;
     try {
       await sendEmployeeInvitation({
         to: input.email,
@@ -603,12 +604,17 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
         title: input.title
       });
     } catch (emailError) {
-      await sql`DELETE FROM users WHERE id = ${employee.id}`;
-      await sql`DELETE FROM invitations WHERE token = ${token}`;
-      throw Object.assign(new Error("Employee email could not be delivered. No account was created."), { status: 502, cause: emailError });
+      emailSent = false;
+      console.error("Could not deliver employee invitation email", emailError);
     }
     invalidateCache(`people:${req.auth.organizationId}`, "channel-memberships:", "socket-memberships:");
-    res.status(201).json({ employee, message: "Employee account created and invitation email sent" });
+    res.status(201).json({
+      employee,
+      emailSent,
+      message: emailSent
+        ? "Employee account created and invitation email sent"
+        : "Employee account created, but the invitation email could not be delivered. Restore email delivery before resetting the employee password and sending new credentials."
+    });
   } catch (error) {
     if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
     next(error);
