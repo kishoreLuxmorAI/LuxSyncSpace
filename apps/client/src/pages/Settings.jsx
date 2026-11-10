@@ -82,6 +82,12 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   }, []);
 
   useEffect(() => {
+    const syncNotifications = () => setNotificationsOn(notificationsEnabled());
+    window.addEventListener("luxsyncspace:notifications-changed", syncNotifications);
+    return () => window.removeEventListener("luxsyncspace:notifications-changed", syncNotifications);
+  }, []);
+
+  useEffect(() => {
     setPrivacy({ displayName: user.display_name || "", hideFullName: Boolean(user.hide_full_name), hideEmail: Boolean(user.hide_email) });
   }, [user.display_name, user.hide_full_name, user.hide_email]);
 
@@ -144,17 +150,20 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   }
 
   async function turnOnNotifications() {
+    setNotificationsOn(true);
     try {
       await enableNotifications();
-      setNotificationsOn(true);
       onToast("Notifications and the LuxSyncspace sound are enabled");
-    } catch (error) { onToast(error.message); }
+    } catch (error) {
+      setNotificationsOn(false);
+      onToast(error.message);
+    }
   }
 
   async function turnOffNotifications() {
+    setNotificationsOn(false);
     try {
       await disableNotifications();
-      setNotificationsOn(false);
       onToast("Notifications disabled on this device");
     } catch (error) { onToast(error.message); }
   }

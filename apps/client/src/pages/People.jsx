@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
 import { api } from "../lib/api";
+import { useEscapeKey } from "../lib/useEscapeKey";
 
 export function People({ user, people, onStartChat, onInvite, onManage, onRefresh, onToast }) {
   const [query, setQuery] = useState("");
@@ -22,6 +23,11 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const canManageEmployment = ["hr", "senior_leader"].includes(user.role);
   const activePeople = people.filter((person) => (person.employment_status || "active") === "active");
+
+  useEscapeKey(() => {
+    if (filtersOpen) setFiltersOpen(false);
+    else setMenuId(null);
+  }, filtersOpen || menuId !== null);
 
   async function updateEmployment() {
     if (!pendingAction) return;
@@ -79,7 +85,7 @@ export function People({ user, people, onStartChat, onInvite, onManage, onRefres
           </div>
         </div>
         <div className={`people-grid${viewMode === "list" ? " people-list" : ""}`}>
-          {filtered.map((person) => <article className={`person-card employment-${person.employment_status || "active"}`} key={person.id}>
+          {filtered.map((person) => <article className={`person-card employment-${person.employment_status || "active"}${menuId === person.id ? " menu-open" : ""}`} key={person.id}>
             <button className="person-more" onClick={() => setMenuId(menuId === person.id ? null : person.id)} aria-label={`Actions for ${person.full_name}`} aria-expanded={menuId === person.id}><MoreHorizontal size={17} /></button>
             {menuId === person.id && <div className="person-menu">
               {(person.employment_status || "active") === "active" && person.id !== user.id && <button onClick={() => { onStartChat(person); setMenuId(null); }}><MessageSquareText size={15} /> Start conversation</button>}

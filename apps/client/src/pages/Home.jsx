@@ -10,6 +10,10 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
   const [announcementsExpanded, setAnnouncementsExpanded] = useState(false);
   const announcements = data.announcements || [];
   const visibleAnnouncements = announcementsExpanded ? announcements : announcements.slice(0, 3);
+  const now = new Date();
+  const upcomingEventCount = data.events.filter((event) =>
+    !event.cancelled_at && !event.ended_at && new Date(event.starts_at) >= now
+  ).length;
   const nextEvents = data.events.filter((event) => !event.cancelled_at && !event.ended_at).slice(0, 4);
   const online = data.people.filter((p) => p.presence === "online");
   const hour = new Date().getHours();
@@ -32,7 +36,7 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
         <div className="header-actions"><button className="button button-secondary" onClick={onNewEvent}><CalendarPlus size={17} /> Schedule</button><button className="button button-secondary" onClick={() => onStartMeeting()}><Video size={17} /> Meet now</button><button className="button button-primary" onClick={() => navigate("chat")}><MessageSquareText size={18} /> Open chat</button></div>
       </header>
       <section className="metrics-grid">
-        <button className="metric-card" onClick={() => navigate("calendar")}><span className="metric-icon purple"><CalendarPlus size={20} /></span><span><b>{data.events.length}</b><small>Events coming up</small></span><ChevronRight size={18} /></button>
+        <button className="metric-card" onClick={() => navigate("calendar")}><span className="metric-icon purple"><CalendarPlus size={20} /></span><span><b>{upcomingEventCount}</b><small>Events coming up</small></span><ChevronRight size={18} /></button>
         <button className="metric-card" onClick={() => navigate("chat")}><span className="metric-icon green"><MessageSquareText size={20} /></span><span><b>{data.channels.length}</b><small>Active channels</small></span><ChevronRight size={18} /></button>
         <button className="metric-card" onClick={() => navigate("people")}><span className="metric-icon orange"><Users size={20} /></span><span><b>{online.length}</b><small>Colleagues online</small></span><ChevronRight size={18} /></button>
       </section>

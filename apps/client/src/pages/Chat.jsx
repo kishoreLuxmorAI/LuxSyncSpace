@@ -7,6 +7,7 @@ import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
 import { Modal } from "../components/Modal";
 import { eventTime } from "../lib/format";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
 
@@ -54,9 +55,11 @@ function formatGroupCreatedDate(value) {
   return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" }).format(date);
 }
 
-export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onStartCall }) {
+export function Chat({ user, channels, people, directUnreadCounts = {}, directConversationTimes = {}, onConversationRead, onRefresh, onToast, initialChannelId, initialPersonId, onSelectConversation, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === (initialPersonId || new URLSearchParams(window.location.search).get("direct"))) || null);
+  const appliedInitialChannelRef = useRef(channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
+  const appliedInitialPersonRef = useRef(selectedPerson?.id || null);
   const [messages, setMessages] = useState([]);
   const [latestDirectMessages, setLatestDirectMessages] = useState(directConversationTimes);
   const [message, setMessage] = useState("");
@@ -108,35 +111,55 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
 
+  useEscapeKey(() => {
+    if (fullPickerMessageId !== null) setFullPickerMessageId(null);
+    else if (reactionMessageId !== null) setReactionMessageId(null);
+    else if (messageMenuId !== null) setMessageMenuId(null);
+    else if (moreOpen) setMoreOpen(false);
+    else if (emojiOpen) setEmojiOpen(false);
+    else if (mentionQuery) setMentionQuery(null);
+    else if (messageSearchOpen) {
+      setMessageSearchOpen(false);
+      setMessageSearch("");
+    }
+  }, Boolean(fullPickerMessageId !== null || reactionMessageId !== null || messageMenuId !== null || moreOpen || emojiOpen || mentionQuery || messageSearchOpen));
+
   function openChannel(channelId) {
     setSelected(channelId);
     setSelectedPerson(null);
+    appliedInitialChannelRef.current = channelId;
+    appliedInitialPersonRef.current = null;
     const url = new URL(window.location.href);
     url.searchParams.set("view", "chat");
     url.searchParams.set("channel", channelId);
     url.searchParams.delete("direct");
     window.history.pushState({ luxsyncspace: true, view: "chat", conversation: "channel" }, "", url);
+    onSelectConversation?.({ channel: channelId, direct: null });
   }
 
   function openPerson(person) {
     setSelected(null);
     setSelectedPerson(person);
+    appliedInitialChannelRef.current = null;
+    appliedInitialPersonRef.current = person.id;
     const url = new URL(window.location.href);
     url.searchParams.set("view", "chat");
     url.searchParams.set("direct", person.id);
     url.searchParams.delete("channel");
     window.history.pushState({ luxsyncspace: true, view: "chat", conversation: "direct" }, "", url);
+    onSelectConversation?.({ channel: null, direct: person.id });
   }
 
-  function closeConversation(useHistory = true) {
-    const params = new URLSearchParams(window.location.search);
-    if (useHistory && (params.has("channel") || params.has("direct"))) return window.history.back();
+  function closeConversation() {
     setSelected(null);
     setSelectedPerson(null);
+    appliedInitialChannelRef.current = null;
+    appliedInitialPersonRef.current = null;
     const url = new URL(window.location.href);
     url.searchParams.delete("channel");
     url.searchParams.delete("direct");
-    window.history.replaceState({ luxsyncspace: true, view: "chat" }, "", url);
+    window.history.pushState({ luxsyncspace: true, view: "chat" }, "", url);
+    onSelectConversation?.({ channel: null, direct: null });
   }
   const filteredPeople = useMemo(() => people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department} ${person.employee_id}`.toLowerCase().includes(query.toLowerCase())
@@ -348,25 +371,44 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       const params = new URLSearchParams(window.location.search);
       const channelId = params.get("channel");
       const personId = params.get("direct");
-      setSelected(channels.some((channel) => channel.id === channelId) ? channelId : null);
-      setSelectedPerson(people.find((person) => person.id === personId) || null);
+      const matchedChannel = channels.some((channel) => channel.id === channelId) ? channelId : null;
+      const matchedPerson = people.find((person) => person.id === personId) || null;
+      setSelected(matchedChannel);
+      setSelectedPerson(matchedPerson);
+      appliedInitialChannelRef.current = matchedChannel;
+      appliedInitialPersonRef.current = matchedPerson?.id || null;
+      onSelectConversation?.({ channel: matchedChannel, direct: matchedPerson?.id || null });
     };
     window.addEventListener("popstate", syncConversation);
     return () => window.removeEventListener("popstate", syncConversation);
-  }, [channels, people]);
+  }, [channels, people, onSelectConversation]);
 
   useEffect(() => {
-    if (initialChannelId && channels.some((channel) => channel.id === initialChannelId)) {
-      setSelected(initialChannelId);
-      setSelectedPerson(null);
-    } else if (initialPersonId) {
+    if (initialChannelId && initialChannelId !== appliedInitialChannelRef.current) {
+      if (channels.some((channel) => channel.id === initialChannelId)) {
+        appliedInitialChannelRef.current = initialChannelId;
+        appliedInitialPersonRef.current = null;
+        setSelected(initialChannelId);
+        setSelectedPerson(null);
+      }
+    } else if (initialPersonId && initialPersonId !== appliedInitialPersonRef.current) {
       const targetPerson = people.find((person) => person.id === initialPersonId);
       if (targetPerson) {
+        appliedInitialPersonRef.current = initialPersonId;
+        appliedInitialChannelRef.current = null;
         setSelected(null);
         setSelectedPerson(targetPerson);
       }
     }
   }, [initialChannelId, initialPersonId, channels, people]);
+
+  useEffect(() => {
+    if (selected && channels.length > 0 && !channels.some((channel) => channel.id === selected)) {
+      setSelected(null);
+      appliedInitialChannelRef.current = null;
+      onSelectConversation?.({ channel: null, direct: selectedPerson?.id || null });
+    }
+  }, [channels, selected, onSelectConversation, selectedPerson?.id]);
 
   useEffect(() => {
     const markReadWhenVisible = () => {
@@ -767,7 +809,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
           <nav className="chat-nav">
             <button className={!selected && !selectedPerson ? "active" : ""} onClick={() => closeConversation()}><Users size={18} /> All employees <b>{people.length}</b></button>
           </nav>
-          <div className="channel-heading"><span>GROUPS & CHANNELS</span>{canCreateGroup && <button onClick={() => setCreateGroup(true)}><Plus size={15} /></button>}</div>
+          <div className="channel-heading"><span>GROUPS & CHANNELS</span></div>
           <nav className="channels">
             {channels.map((channel) => <button key={channel.id} onClick={() => openChannel(channel.id)} className={selected === channel.id ? "active" : ""}>{channel.is_private ? <Lock size={16} /> : <Hash size={17} />}<span>{channel.name}</span><UnreadBadge count={channel.unread_count} /></button>)}
           </nav>
