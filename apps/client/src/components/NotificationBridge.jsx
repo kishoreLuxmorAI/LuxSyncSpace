@@ -3,14 +3,14 @@ import { io } from "socket.io-client";
 import { SOCKET_URL, socketOptions } from "../lib/api";
 import { dismissIncomingCallNotification, primeNotificationAudio, refreshNotificationSubscription, showIncomingCallNotification, showWorkspaceNotification, stopIncomingCallRingtone } from "../lib/notifications";
 
-export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded, onEventCancelled }) {
+export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded }) {
   const channelsRef = useRef(channels);
-  const callbacksRef = useRef({ onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded, onEventCancelled });
+  const callbacksRef = useRef({ onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded });
 
   useEffect(() => {
     channelsRef.current = channels;
-    callbacksRef.current = { onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded, onEventCancelled };
-  }, [channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded, onEventCancelled]);
+    callbacksRef.current = { onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded };
+  }, [channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded]);
 
   useEffect(() => {
     let lastSubscriptionRefresh = 0;
@@ -75,7 +75,6 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     });
     socket.on("event:cancelled", (event) => {
       notify(event.title, event.body, event.tag, "meeting", "meetings");
-      callbacksRef.current.onEventCancelled?.(event.event_id);
       callbacksRef.current.onRefresh?.();
     });
     socket.on("event:ended", (event) => {
