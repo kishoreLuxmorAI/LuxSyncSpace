@@ -1,12 +1,16 @@
 import { useState } from "react";
-import { ArrowRight, Ban, CalendarPlus, ChevronRight, Hash, Megaphone, MessageSquareText, PhoneOff, Plus, Sparkles, Users, Video } from "lucide-react";
+import { ArrowRight, Ban, CalendarPlus, ChevronRight, Hash, Megaphone, MessageSquareText, Pencil, PhoneOff, Plus, Sparkles, Trash2, Users, Video } from "lucide-react";
 import { Avatar } from "../components/Avatar";
 import { CreateAnnouncement } from "../components/CreateAnnouncement";
+import { Modal } from "../components/Modal";
 import { api } from "../lib/api";
 import { dateHeading, eventTime } from "../lib/format";
 
 export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJoinMeeting, onStartMeeting }) {
   const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const [announcementToEdit, setAnnouncementToEdit] = useState(null);
+  const [announcementToDelete, setAnnouncementToDelete] = useState(null);
+  const [deletingAnnouncement, setDeletingAnnouncement] = useState(false);
   const [announcementsExpanded, setAnnouncementsExpanded] = useState(false);
   const announcements = data.announcements || [];
   const visibleAnnouncements = announcementsExpanded ? announcements : announcements.slice(0, 3);
@@ -27,6 +31,33 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
       setAnnouncementOpen(false);
       onToast("Company announcement published");
     } catch (error) { onToast(error.message); }
+  }
+
+  async function updateAnnouncement(announcement) {
+    try {
+      await api(`/announcements/${announcementToEdit.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(announcement)
+      });
+      await onRefresh();
+      setAnnouncementToEdit(null);
+      onToast("Company announcement updated");
+    } catch (error) { onToast(error.message); }
+  }
+
+  async function deleteAnnouncement() {
+    if (!announcementToDelete || deletingAnnouncement) return;
+    setDeletingAnnouncement(true);
+    try {
+      await api(`/announcements/${announcementToDelete.id}`, { method: "DELETE" });
+      await onRefresh();
+      setAnnouncementToDelete(null);
+      onToast("Company announcement deleted");
+    } catch (error) {
+      onToast(error.message);
+    } finally {
+      setDeletingAnnouncement(false);
+    }
   }
 
   return (
@@ -77,7 +108,7 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
       <section className="panel announcements-panel">
         <header className="panel-header"><div><h2>Company announcements <span>({announcements.length})</span></h2><p>Official updates from leadership and People Operations</p></div><div className="announcement-actions">{announcements.length > 3 && <button className="link-button announcement-toggle" aria-expanded={announcementsExpanded} aria-controls="company-announcements-list" onClick={() => setAnnouncementsExpanded((expanded) => !expanded)}>{announcementsExpanded ? "View Less" : "View All"}</button>}{canAnnounce && <button className="button button-secondary button-small" onClick={() => setAnnouncementOpen(true)}><Megaphone size={15} /> New announcement</button>}</div></header>
         <div className="announcements-list" id="company-announcements-list">
-          {visibleAnnouncements.map((announcement) => <article key={announcement.id} className={announcement.priority === "important" ? "important" : ""}><span className="announcement-icon"><Megaphone size={18} /></span><div><span><b>{announcement.title}</b>{announcement.priority === "important" && <em>IMPORTANT</em>}</span><p>{announcement.body}</p><small>{announcement.author_name} · {new Date(announcement.published_at).toLocaleDateString()}</small></div></article>)}
+          {visibleAnnouncements.map((announcement) => <article key={announcement.id} className={announcement.priority === "important" ? "important" : ""}><span className="announcement-icon"><Megaphone size={18} /></span><div className="announcement-content"><span><b>{announcement.title}</b>{announcement.priority === "important" && <em>IMPORTANT</em>}</span><p>{announcement.body}</p><small>{announcement.author_name} · {new Date(announcement.published_at).toLocaleDateString()}</small></div>{canAnnounce && <div className="announcement-card-actions"><button type="button" aria-label={`Edit ${announcement.title}`} title="Edit announcement" onClick={() => setAnnouncementToEdit(announcement)}><Pencil size={14} /></button><button type="button" className="delete" aria-label={`Delete ${announcement.title}`} title="Delete announcement" onClick={() => setAnnouncementToDelete(announcement)}><Trash2 size={14} /></button></div>}</article>)}
         </div>
       </section>
       <section className="panel team-pulse">
@@ -87,6 +118,10 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
         </div>
       </section>
       {announcementOpen && <CreateAnnouncement onCreate={publishAnnouncement} onClose={() => setAnnouncementOpen(false)} />}
+      {announcementToEdit && <CreateAnnouncement key={announcementToEdit.id} announcement={announcementToEdit} onUpdate={updateAnnouncement} onClose={() => setAnnouncementToEdit(null)} />}
+      {announcementToDelete && <Modal title="Delete announcement?" subtitle={`“${announcementToDelete.title}” will be permanently removed.`} onClose={() => !deletingAnnouncement && setAnnouncementToDelete(null)}>
+        <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setAnnouncementToDelete(null)} disabled={deletingAnnouncement}>Cancel</button><button type="button" className="button button-danger" onClick={deleteAnnouncement} disabled={deletingAnnouncement}><Trash2 size={16} /> {deletingAnnouncement ? "Deleting…" : "Delete announcement"}</button></div>
+      </Modal>}
     </div>
   );
 }
