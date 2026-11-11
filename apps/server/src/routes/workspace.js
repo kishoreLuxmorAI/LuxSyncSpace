@@ -713,8 +713,9 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
       ? await sql`SELECT full_name AS manager_name FROM users WHERE id = ${employee.manager_id}`
       : [];
     invalidateCache(`people:${req.auth.organizationId}`, "socket-memberships:");
-    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("employee:status-updated");
-    res.json({ employee: { ...employee, manager_name: manager?.manager_name || null }, message: "Employee details updated" });
+    const updatedEmployee = { ...employee, manager_name: manager?.manager_name || null };
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("employee:updated", updatedEmployee);
+    res.json({ employee: updatedEmployee, message: "Employee details updated" });
   } catch (error) {
     if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
     next(error);
