@@ -3,14 +3,14 @@ import { io } from "socket.io-client";
 import { SOCKET_URL, socketOptions } from "../lib/api";
 import { dismissIncomingCallNotification, primeNotificationAudio, refreshNotificationSubscription, showIncomingCallNotification, showWorkspaceNotification, stopIncomingCallRingtone } from "../lib/notifications";
 
-export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded, onToast }) {
+export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded }) {
   const channelsRef = useRef(channels);
-  const callbacksRef = useRef({ onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded, onToast });
+  const callbacksRef = useRef({ onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded });
 
   useEffect(() => {
     channelsRef.current = channels;
-    callbacksRef.current = { onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded, onToast };
-  }, [channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded, onToast]);
+    callbacksRef.current = { onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded };
+  }, [channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded]);
 
   useEffect(() => {
     let lastSubscriptionRefresh = 0;
@@ -95,11 +95,6 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     });
     socket.on("employee:updated", (employee) => {
       callbacksRef.current.onEmployeeUpdate?.(employee);
-    });
-    socket.on("invitation:email-status", ({ email, status }) => {
-      callbacksRef.current.onToast?.(status === "sent"
-        ? `Invitation email sent to ${email}`
-        : `Employee account created, but the invitation email could not be delivered to ${email}.`);
     });
     socket.on("profile:privacy-updated", (updatedUser) => {
       if (updatedUser?.id !== user.id) callbacksRef.current.onRefresh?.();
