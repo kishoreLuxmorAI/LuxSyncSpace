@@ -7,6 +7,7 @@ import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
 import { Modal } from "../components/Modal";
 import { eventTime } from "../lib/format";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
 
@@ -92,6 +93,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const textareaRef = useRef();
   const fileInputRef = useRef();
   const photoInputRef = useRef();
+  const attachmentButtonRef = useRef(null);
+  const attachmentMenuRef = useRef(null);
   const emojiPickerRef = useRef(null);
   const reactionPickerRef = useRef(null);
   const messageMenuRef = useRef(null);
@@ -227,6 +230,14 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       }
 
       if (
+        attachmentMenuOpen &&
+        !attachmentButtonRef.current?.contains(event.target) &&
+        !attachmentMenuRef.current?.contains(event.target)
+      ) {
+        setAttachmentMenuOpen(false);
+      }
+
+      if (
         messageMenuRef.current &&
         !messageMenuRef.current.contains(event.target)
       ) {
@@ -247,7 +258,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, []);
+  }, [attachmentMenuOpen]);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -1001,10 +1012,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
             <input ref={fileInputRef} className="composer-file-input" type="file" accept={ACCEPTED_FILES} onChange={chooseFile} />
             <input ref={photoInputRef} className="composer-file-input" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp" onChange={chooseFile} />
             <div className="composer-toolbar"><span>
-              <button type="button" className={uploading || attachmentMenuOpen ? "tool-busy" : ""} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading} title="Attach a file" aria-haspopup="menu" aria-expanded={attachmentMenuOpen}><Paperclip size={18} /></button>
+              <button ref={attachmentButtonRef} type="button" className={uploading ? "tool-busy" : attachmentMenuOpen ? "active" : ""} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading} title="Attach a file" aria-haspopup="menu" aria-expanded={attachmentMenuOpen}><Paperclip size={18} /></button>
               <button type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
             </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
-            {attachmentMenuOpen && <div role="menu" aria-label="Attach a file" style={{ position: "absolute", left: 8, bottom: "calc(100% + 6px)", zIndex: 25, width: 210, padding: 5, border: "1px solid #d8dee8", borderRadius: 9, background: "white", boxShadow: "0 12px 30px rgba(20,34,58,.16)" }}>
+            {attachmentMenuOpen && <div ref={attachmentMenuRef} role="menu" aria-label="Attach a file" style={{ position: "absolute", left: 8, bottom: "calc(100% + 6px)", zIndex: 25, width: 210, padding: 5, border: "1px solid #d8dee8", borderRadius: 9, background: "white", boxShadow: "0 12px 30px rgba(20,34,58,.16)" }}>
               <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); fileInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Upload from This Device</button>
               <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); photoInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Photos</button>
             </div>}
