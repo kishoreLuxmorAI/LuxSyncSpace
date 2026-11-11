@@ -38,7 +38,7 @@ function appIsInstalled() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 }
 
-export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onStartTutorial, onChangePassword }) {
+export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, onUserUpdate, onStartTutorial, onChangePassword }) {
   const [tab, setTab] = useState("profile");
   const [selected, setSelected] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -218,12 +218,12 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     setBusy(true);
     try {
       const result = await api(`/employees/${selected.id}`, { method: "PATCH", body: JSON.stringify(editing) });
-      setSelected(result.employee);
+      onEmployeeUpdate?.(result.employee);
+      setSelected(null);
       setEditing(null);
       if (onUserUpdate && (selected.id === user.id || result.employee?.id === user.id)) {
         onUserUpdate(result.employee);
       }
-      await onRefresh();
       onToast(result.message || "Employee details updated");
     } catch (error) { onToast(error.message); }
     finally { setBusy(false); }

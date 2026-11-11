@@ -7,7 +7,6 @@ import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
 import { Modal } from "../components/Modal";
 import { eventTime } from "../lib/format";
-import { useEscapeKey } from "../lib/useEscapeKey";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
 
@@ -387,14 +386,14 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }, [channels, people, onSelectConversation]);
 
   useEffect(() => {
-    if (initialChannelId && initialChannelId !== appliedInitialChannelRef.current) {
+    if (initialChannelId && (initialChannelId !== appliedInitialChannelRef.current || selected !== initialChannelId)) {
       if (channels.some((channel) => channel.id === initialChannelId)) {
         appliedInitialChannelRef.current = initialChannelId;
         appliedInitialPersonRef.current = null;
         setSelected(initialChannelId);
         setSelectedPerson(null);
       }
-    } else if (initialPersonId && initialPersonId !== appliedInitialPersonRef.current) {
+    } else if (initialPersonId && (initialPersonId !== appliedInitialPersonRef.current || selectedPerson?.id !== initialPersonId)) {
       const targetPerson = people.find((person) => person.id === initialPersonId);
       if (targetPerson) {
         appliedInitialPersonRef.current = initialPersonId;
@@ -403,7 +402,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         setSelectedPerson(targetPerson);
       }
     }
-  }, [initialChannelId, initialPersonId, channels, people]);
+  }, [initialChannelId, initialPersonId, channels, people, selected, selectedPerson?.id]);
 
   useEffect(() => {
     if (selected && channels.length > 0 && !channels.some((channel) => channel.id === selected)) {
