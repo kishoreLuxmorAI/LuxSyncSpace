@@ -70,6 +70,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [attachment, setAttachment] = useState(null);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [createGroup, setCreateGroup] = useState(false);
   const [manageMembers, setManageMembers] = useState(false);
@@ -90,6 +91,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const endRef = useRef();
   const textareaRef = useRef();
   const fileInputRef = useRef();
+  const photoInputRef = useRef();
   const emojiPickerRef = useRef(null);
   const reactionPickerRef = useRef(null);
   const messageMenuRef = useRef(null);
@@ -109,6 +111,20 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }, [mentionPeople, mentionQuery]);
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
+
+  useEscapeKey(() => {
+    if (fullPickerMessageId !== null) setFullPickerMessageId(null);
+    else if (reactionMessageId !== null) setReactionMessageId(null);
+    else if (messageMenuId !== null) setMessageMenuId(null);
+    else if (moreOpen) setMoreOpen(false);
+    else if (attachmentMenuOpen) setAttachmentMenuOpen(false);
+    else if (emojiOpen) setEmojiOpen(false);
+    else if (mentionQuery) setMentionQuery(null);
+    else if (messageSearchOpen) {
+      setMessageSearchOpen(false);
+      setMessageSearch("");
+    }
+  }, Boolean(fullPickerMessageId !== null || reactionMessageId !== null || messageMenuId !== null || moreOpen || attachmentMenuOpen || emojiOpen || mentionQuery || messageSearchOpen));
 
   function openChannel(channelId) {
     setSelected(channelId);
@@ -649,6 +665,13 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   function chooseFile(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
+    if (file && event.currentTarget === photoInputRef.current) {
+      const allowedTypes = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+      if (!/\.(jpe?g|png|gif|webp)$/i.test(file.name) || (file.type && !allowedTypes.has(file.type))) {
+        onToast("Photos must be JPG, JPEG, PNG, GIF, or WEBP images");
+        return;
+      }
+    }
     void uploadAttachment(file);
   }
 
@@ -976,10 +999,15 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
               } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
             }} placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`} rows={1} />
             <input ref={fileInputRef} className="composer-file-input" type="file" accept={ACCEPTED_FILES} onChange={chooseFile} />
+            <input ref={photoInputRef} className="composer-file-input" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp" onChange={chooseFile} />
             <div className="composer-toolbar"><span>
-              <button type="button" className={uploading ? "tool-busy" : ""} onClick={() => fileInputRef.current?.click()} disabled={uploading} title="Attach a file"><Paperclip size={18} /></button>
+              <button type="button" className={uploading || attachmentMenuOpen ? "tool-busy" : ""} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading} title="Attach a file" aria-haspopup="menu" aria-expanded={attachmentMenuOpen}><Paperclip size={18} /></button>
               <button type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji"><Smile size={18} /></button>
             </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
+            {attachmentMenuOpen && <div role="menu" aria-label="Attach a file" style={{ position: "absolute", left: 8, bottom: "calc(100% + 6px)", zIndex: 25, width: 210, padding: 5, border: "1px solid #d8dee8", borderRadius: 9, background: "white", boxShadow: "0 12px 30px rgba(20,34,58,.16)" }}>
+              <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); fileInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Upload from This Device</button>
+              <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); photoInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Photos</button>
+            </div>}
             {emojiOpen &&
               <div
                 ref={emojiPickerRef}
