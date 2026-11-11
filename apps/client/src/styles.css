@@ -847,8 +847,9 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .support-card-icon { width: 45px; height: 45px; border-radius: 11px; display: grid; place-items: center; color: var(--blue); background: var(--blue-soft); margin-bottom: 14px; }
 .support-contact-card h2, .quick-help-card h2 { font-size: 14px; margin: 0 0 7px; }.support-contact-card p { color: var(--muted); font-size: 10px; line-height: 1.5; margin-bottom: 13px; }
 .support-contact-card a { color: var(--blue); display: flex; gap: 5px; align-items: center; overflow-wrap: anywhere; font-size: 10px; font-weight: 700; }
-.quick-help-card > div { display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--soft-line); color: #748095; }
-.quick-help-card > div:last-child { border: 0; }.quick-help-card span { display: grid; gap: 3px; }.quick-help-card b { color: #354157; font-size: 10px; }.quick-help-card small { font-size: 8.5px; }
+.quick-help-item { width: 100%; display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border: 0; border-bottom: 1px solid var(--soft-line); background: transparent; color: #748095; text-align: left; }
+.quick-help-item:last-child { border: 0; }.quick-help-item span { min-width: 0; flex: 1; display: grid; gap: 3px; }.quick-help-item b { color: #354157; font-size: 10px; }.quick-help-item small { font-size: 8.5px; line-height: 1.4; }.quick-help-item:hover b, .quick-help-item:focus-visible b { color: var(--blue); }.quick-help-item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
+.quick-help-details { display: grid; gap: 15px; padding: 20px; }.quick-help-details section { display: grid; gap: 4px; }.quick-help-details h3 { margin: 0; color: #354157; font-size: 12px; }.quick-help-details p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; }.quick-help-details > .button { justify-self: start; margin-top: 3px; }
 
 @keyframes fadeIn { from { opacity: 0; } }
 @keyframes modalIn { from { opacity: 0; transform: translateY(8px) scale(.985); } }
