@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import multer from "multer";
+import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
 import { sql } from "../db/client.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -582,76 +583,84 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
       managerId: z.union([z.string().uuid(), z.literal(""), z.null()]).default(""),
       joinedAt: z.string().date().refine((d) => d <= new Date().toISOString().slice(0, 10), { message: "Joining date cannot be in the future" })
     }).parse(req.body);
-    const [existing] = await sql`SELECT id FROM users WHERE lower(email) = lower(${input.email})`;
-    if (existing) return res.status(409).json({ error: "An employee with this email already exists" });
-    if (input.employeeId) {
-      const [existingId] = await sql`SELECT id FROM users WHERE organization_id = ${req.auth.organizationId} AND employee_id = ${input.employeeId}`;
-      if (existingId) return res.status(409).json({ error: "This employee ID is already assigned" });
-    }
-    if (input.managerId) {
-      const [manager] = await sql`SELECT id FROM users WHERE id = ${input.managerId} AND organization_id = ${req.auth.organizationId}`;
-      if (!manager) return res.status(400).json({ error: "The selected reporting manager is not available" });
-    }
+    const [validation] = await sql`
+      SELECT
+        EXISTS (SELECT 1 FROM users WHERE lower(email) = lower(${input.email})) AS email_exists,
+        ${Boolean(input.employeeId)} AND EXISTS (
+          SELECT 1 FROM users
+          WHERE organization_id = ${req.auth.organizationId} AND employee_id = ${input.employeeId}
+        ) AS employee_id_exists,
+        ${!input.managerId} OR EXISTS (
+          SELECT 1 FROM users
+          WHERE id = ${input.managerId || null} AND organization_id = ${req.auth.organizationId}
+        ) AS manager_exists
+    `;
+    if (validation.email_exists) return res.status(409).json({ error: "An employee with this email already exists" });
+    if (validation.employee_id_exists) return res.status(409).json({ error: "This employee ID is already assigned" });
+    if (!validation.manager_exists) return res.status(400).json({ error: "The selected reporting manager is not available" });
 
     const token = crypto.randomBytes(24).toString("hex");
     const temporaryPassword = `Ls!${crypto.randomBytes(9).toString("base64url")}7`;
     const passwordHash = await bcrypt.hash(temporaryPassword, 12);
-    let employeeId = input.employeeId;
-    if (!employeeId) {
-      const [{ next_id: nextId }] = await sql`
+    const initials = input.fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+    const [employee] = await sql`
+      WITH next_employee_id AS (
         SELECT GREATEST(
           COALESCE(MAX(NULLIF(regexp_replace(employee_id, '\\D', '', 'g'), '')::int), 1000) + 1,
           1001
         )::int AS next_id
         FROM users WHERE organization_id = ${req.auth.organizationId}
-      `;
-      employeeId = `LUX-${String(nextId).padStart(4, "0")}`;
-    }
-    const initials = input.fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
-    const [employee] = await sql`
-      INSERT INTO users (
-        organization_id, employee_id, email, password_hash, full_name, title, department, role,
-        initials, avatar_color, presence, phone, location, bio, manager_id, joined_at, must_change_password,
-        onboarding_completed_at
+      ), created_employee AS (
+        INSERT INTO users (
+          organization_id, employee_id, email, password_hash, full_name, title, department, role,
+          initials, avatar_color, presence, phone, location, bio, manager_id, joined_at, must_change_password,
+          onboarding_completed_at
+        )
+        SELECT
+          ${req.auth.organizationId},
+          CASE WHEN ${input.employeeId} = '' THEN 'LUX-' || LPAD(next_id::text, 4, '0') ELSE ${input.employeeId} END,
+          ${input.email}, ${passwordHash}, ${input.fullName}, ${input.title}, ${input.department}, ${input.role},
+          ${initials}, '#3768D8', 'offline', ${input.phone}, ${input.location}, ${input.bio},
+          ${input.managerId || null}, ${input.joinedAt}, TRUE, NULL
+        FROM next_employee_id
+        RETURNING id, employee_id, email, full_name, title, department, role, phone, location, bio, manager_id, joined_at
+      ), created_channel_memberships AS (
+        INSERT INTO channel_members (channel_id, user_id)
+        SELECT channels.id, created_employee.id
+        FROM channels CROSS JOIN created_employee
+        WHERE channels.organization_id = ${req.auth.organizationId} AND channels.is_private = FALSE
+        ON CONFLICT DO NOTHING
+        RETURNING user_id
+      ), created_invitation AS (
+        INSERT INTO invitations (organization_id, token, email, role, department, created_by, expires_at)
+        SELECT ${req.auth.organizationId}, ${token}, created_employee.email, ${input.role}, ${input.department},
+          ${req.auth.userId}, NOW() + INTERVAL '1 day'
+        FROM created_employee
+        RETURNING id
       )
-      VALUES (
-        ${req.auth.organizationId}, ${employeeId}, ${input.email}, ${passwordHash}, ${input.fullName},
-        ${input.title}, ${input.department}, ${input.role}, ${initials}, '#3768D8', 'offline',
-        ${input.phone}, ${input.location}, ${input.bio}, ${input.managerId || null}, ${input.joinedAt}, TRUE, NULL
-      )
-      RETURNING id, employee_id, email, full_name, title, department, role, phone, location, bio, manager_id, joined_at
+      SELECT * FROM created_employee
     `;
-    await sql`
-      INSERT INTO channel_members (channel_id, user_id)
-      SELECT id, ${employee.id} FROM channels
-      WHERE organization_id = ${req.auth.organizationId} AND is_private = FALSE
-      ON CONFLICT DO NOTHING
-    `;
-    await sql`
-      INSERT INTO invitations (organization_id, token, email, role, department, created_by, expires_at)
-      VALUES (${req.auth.organizationId}, ${token}, ${input.email}, ${input.role}, ${input.department}, ${req.auth.userId}, NOW() + INTERVAL '1 day')
-    `;
-    let emailSent = true;
-    try {
-      await sendEmployeeInvitation({
-        to: input.email,
-        fullName: input.fullName,
-        temporaryPassword,
-        employeeId,
-        department: input.department,
-        title: input.title
-      });
-    } catch (emailError) {
-      emailSent = false;
+    const inviterId = req.auth.userId;
+    const io = req.app.get("io");
+    const emailDelivery = Promise.resolve().then(() => sendEmployeeInvitation({
+      to: input.email,
+      fullName: input.fullName,
+      temporaryPassword,
+      employeeId: employee.employee_id,
+      department: input.department,
+      title: input.title
+    })).then(() => {
+      io?.to(`user:${inviterId}`).emit("invitation:email-status", { email: input.email, status: "sent" });
+    }).catch((emailError) => {
       console.error("Could not deliver employee invitation email", emailError);
-    }
+      io?.to(`user:${inviterId}`).emit("invitation:email-status", { email: input.email, status: "failed" });
+    });
+    if (process.env.VERCEL) waitUntil(emailDelivery);
     invalidateCache(`people:${req.auth.organizationId}`, "channel-memberships:", "socket-memberships:");
     res.status(201).json({
       employee,
-      emailSent,
-      message: emailSent
-        ? "Employee account created and invitation email sent"
-        : "Employee account created, but the invitation email could not be delivered. Restore email delivery before resetting the employee password and sending new credentials."
+      emailStatus: "sending",
+      message: "Employee account created. Invitation email is being sent."
     });
   } catch (error) {
     if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
