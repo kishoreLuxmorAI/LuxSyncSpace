@@ -75,10 +75,12 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     });
     socket.on("event:cancelled", (event) => {
       notify(event.title, event.body, event.tag, "meeting", "meetings");
+      callbacksRef.current.onEventCancelled?.(event.event_id);
       callbacksRef.current.onRefresh?.();
     });
     socket.on("event:ended", (event) => {
       callbacksRef.current.onMeetingEnded?.(event);
+      callbacksRef.current.onEventCancelled?.(event.event_id);
       callbacksRef.current.onRefresh?.();
     });
     socket.on("channel:membership-updated", () => {
@@ -88,6 +90,7 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
       callbacksRef.current.onPresenceUpdate?.(presence);
     });
     socket.on("employee:status-updated", () => {
+      callbacksRef.current.onEventCancelled?.(event.event_id);
       callbacksRef.current.onRefresh?.();
     });
     socket.on("employee:updated", (employee) => {

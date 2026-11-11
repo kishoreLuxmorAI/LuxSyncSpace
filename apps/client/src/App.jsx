@@ -300,7 +300,7 @@ export default function App() {
       setData((current) => ({
         ...current,
         events: current.events.map((item) => item.id === event.id
-          ? { ...item, ...result.event }
+          ? { ...item, ...result.event, cancelled_at: result.event?.cancelled_at || optimisticCancelledAt }
           : item)
       }));
       setToast(result.message);
@@ -348,6 +348,13 @@ export default function App() {
       ? { ...current, channels: current.channels.map((channel) => channel.id === id ? { ...channel, unread_count: 0 } : channel) }
       : { ...current, directUnreadCounts: { ...current.directUnreadCounts, [id]: 0 } }
     );
+  }, []);
+
+  const handleEventCancelled = useCallback((eventId) => {
+    setData((current) => ({
+      ...current,
+      events: current.events.map((e) => e.id === eventId ? { ...e, cancelled_at: new Date().toISOString() } : e)
+    }));
   }, []);
 
   const updatePresence = useCallback((presence) => {
