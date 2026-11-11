@@ -103,7 +103,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           FROM users u LEFT JOIN users m ON m.id = u.manager_id
           WHERE u.organization_id = ${organizationId} ORDER BY u.full_name`),
       cached(`channel-memberships:${organizationId}`, 10_000, () => sql`
-          SELECT c.id, c.name, c.description, c.is_private, c.created_by, m.muted, m.user_id,
+          SELECT c.id, c.name, c.description, c.is_private, c.created_at, c.created_by, m.muted, m.user_id,
              COALESCE(message_stats.message_count, 0)::int AS message_count
           FROM channels c
           JOIN channel_members m ON m.channel_id = c.id
@@ -114,7 +114,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           WHERE c.organization_id = ${organizationId}
           ORDER BY c.name
         `).then((memberships) => memberships.filter((membership) => membership.user_id === userId)),
-      cached(`events:${organizationId}`, 15_000, () => sql`SELECT e.*,
+      cached(`events:${organizationId}:${userId}`, 15_000, () => sql`SELECT e.*,
              CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS organizer_name,
              COALESCE(json_agg(json_build_object('id', a.id, 'name', CASE WHEN a.hide_full_name THEN COALESCE(NULLIF(a.display_name, ''), 'Team member') ELSE a.full_name END, 'initials', a.initials, 'color', a.avatar_color))
                FILTER (WHERE a.id IS NOT NULL), '[]') AS attendees
@@ -125,6 +125,10 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           WHERE e.organization_id = ${organizationId}
             AND e.starts_at >= date_trunc('day', NOW()) - INTERVAL '1 day'
             AND e.starts_at < date_trunc('day', NOW()) + INTERVAL '14 days'
+            AND (e.organizer_id = ${userId} OR EXISTS (
+              SELECT 1 FROM event_attendees viewer_attendee
+              WHERE viewer_attendee.event_id = e.id AND viewer_attendee.user_id = ${userId}
+            ))
           GROUP BY e.id, u.full_name, u.hide_full_name, u.display_name ORDER BY e.starts_at`)
       ,
       cached(`announcements:${organizationId}`, 30_000, () => sql`SELECT a.id, a.title, a.body, a.priority, a.published_at,
@@ -132,7 +136,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
              u.initials AS author_initials, u.avatar_color AS author_color
           FROM announcements a JOIN users u ON u.id = a.author_id
           WHERE a.organization_id = ${organizationId}
-          ORDER BY a.published_at DESC LIMIT 20`),
+          ORDER BY a.published_at DESC`),
       sql`SELECT member.channel_id, COUNT(message.id)::int AS unread_count
           FROM channel_members member
           LEFT JOIN channel_messages message ON message.channel_id = member.channel_id
@@ -523,6 +527,44 @@ workspaceRouter.post("/announcements", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+workspaceRouter.patch("/announcements/:announcementId", async (req, res, next) => {
+  try {
+    const announcementId = z.string().uuid().parse(req.params.announcementId);
+    const role = await currentRole(req.auth.userId);
+    if (!announcementRoles.has(role)) return res.status(403).json({ error: "Only HR and senior leaders can edit company announcements" });
+    const input = z.object({
+      title: z.string().trim().min(2).max(180),
+      body: z.string().trim().min(2).max(5000),
+      priority: z.enum(["normal", "important"])
+    }).parse(req.body);
+    const [announcement] = await sql`
+      UPDATE announcements
+      SET title = ${input.title}, body = ${input.body}, priority = ${input.priority}
+      WHERE id = ${announcementId} AND organization_id = ${req.auth.organizationId}
+      RETURNING id, title, body, priority, published_at
+    `;
+    if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+    invalidateCache(`announcements:${req.auth.organizationId}`);
+    res.json(announcement);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.delete("/announcements/:announcementId", async (req, res, next) => {
+  try {
+    const announcementId = z.string().uuid().parse(req.params.announcementId);
+    const role = await currentRole(req.auth.userId);
+    if (!announcementRoles.has(role)) return res.status(403).json({ error: "Only HR and senior leaders can delete company announcements" });
+    const [announcement] = await sql`
+      DELETE FROM announcements
+      WHERE id = ${announcementId} AND organization_id = ${req.auth.organizationId}
+      RETURNING id
+    `;
+    if (!announcement) return res.status(404).json({ error: "Announcement not found" });
+    invalidateCache(`announcements:${req.auth.organizationId}`);
+    res.json({ id: announcement.id, message: "Company announcement deleted" });
+  } catch (error) { next(error); }
+});
+
 workspaceRouter.post("/invitations", async (req, res, next) => {
   try {
     const role = await currentRole(req.auth.userId);
@@ -589,6 +631,7 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
       INSERT INTO invitations (organization_id, token, email, role, department, created_by, expires_at)
       VALUES (${req.auth.organizationId}, ${token}, ${input.email}, ${input.role}, ${input.department}, ${req.auth.userId}, NOW() + INTERVAL '1 day')
     `;
+    let emailSent = true;
     try {
       await sendEmployeeInvitation({
         to: input.email,
@@ -599,12 +642,17 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
         title: input.title
       });
     } catch (emailError) {
-      await sql`DELETE FROM users WHERE id = ${employee.id}`;
-      await sql`DELETE FROM invitations WHERE token = ${token}`;
-      throw Object.assign(new Error("Employee email could not be delivered. No account was created."), { status: 502, cause: emailError });
+      emailSent = false;
+      console.error("Could not deliver employee invitation email", emailError);
     }
     invalidateCache(`people:${req.auth.organizationId}`, "channel-memberships:", "socket-memberships:");
-    res.status(201).json({ employee, message: "Employee account created and invitation email sent" });
+    res.status(201).json({
+      employee,
+      emailSent,
+      message: emailSent
+        ? "Employee account created and invitation email sent"
+        : "Employee account created, but the invitation email could not be delivered. Restore email delivery before resetting the employee password and sending new credentials."
+    });
   } catch (error) {
     if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
     next(error);
@@ -665,8 +713,9 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
       ? await sql`SELECT full_name AS manager_name FROM users WHERE id = ${employee.manager_id}`
       : [];
     invalidateCache(`people:${req.auth.organizationId}`, "socket-memberships:");
-    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("employee:status-updated");
-    res.json({ employee: { ...employee, manager_name: manager?.manager_name || null }, message: "Employee details updated" });
+    const updatedEmployee = { ...employee, manager_name: manager?.manager_name || null };
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("employee:updated", updatedEmployee);
+    res.json({ employee: updatedEmployee, message: "Employee details updated" });
   } catch (error) {
     if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
     next(error);

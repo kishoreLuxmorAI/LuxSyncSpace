@@ -7,7 +7,7 @@ import { dateHeading, eventTime } from "../lib/format";
 
 export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJoinMeeting, onStartMeeting }) {
   const [announcementOpen, setAnnouncementOpen] = useState(false);
-  const nextEvents = data.events.slice(0, 4);
+  const nextEvents = (data.events || []).filter((event) => !event.cancelled_at && !event.ended_at).slice(0, 4);
   const online = data.people.filter((p) => p.presence === "online");
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -38,7 +38,7 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
           <header className="panel-header"><div><h2>Team channels</h2><p>Continue the conversations your team is working on</p></div><button className="link-button" onClick={() => navigate("chat")}>Open chat <ArrowRight size={15} /></button></header>
           <div className="priority-list channel-home-list">
             {data.channels.map((channel, index) => (
-              <button key={channel.id} onClick={() => navigate("chat")}>
+              <button key={channel.id} onClick={() => navigate("chat", { channel: channel.id })}>
                 <span className={`metric-icon ${index % 2 ? "purple" : "blue"}`}><Hash size={19} /></span>
                 <span className="channel-summary"><b>#{channel.name}</b><strong>{channel.description}</strong><small>{channel.message_count} messages in this channel</small></span>
                 <ChevronRight size={17} />
@@ -58,7 +58,7 @@ export function Home({ user, data, navigate, onNewEvent, onRefresh, onToast, onJ
                   <span><b>{event.title}</b><small>{event.location}</small></span>
                   {event.is_online && !event.ended_at && !event.cancelled_at && <button className="join-button" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button>}
                   {event.ended_at && <span className="meeting-ended-chip"><PhoneOff size={11} /> {endedLabel}</span>}
-                  {event.cancelled_at && <span className="meeting-cancelled-chip"><Ban size={11} /> Cancelled</span>}
+
                 </div>
               );
             })}
