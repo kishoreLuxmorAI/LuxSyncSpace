@@ -484,6 +484,7 @@ export default function App() {
         channels={data.channels}
         onRefresh={refreshWorkspace}
         onIncomingCall={setIncomingCall}
+        onToast={setToast}
         onNotification={receiveNotification}
         onChatMessage={receiveChatMessage}
         onPresenceUpdate={updatePresence}
@@ -515,7 +516,7 @@ export default function App() {
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "change-password", "help"].includes(active) && <Home {...pageProps} />}
       </Shell>
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} onEmployeeUpdate={updateEmployee} />
+      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onToast={setToast} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} onEmployeeUpdate={updateEmployee} />
       <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onOpen={() => openNotification(notification)} onClose={() => setNotification(null)} />
       {!tutorialOpen && <NotificationSetupPrompt onToast={setToast} />}
