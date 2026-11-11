@@ -358,6 +358,26 @@ export default function App() {
     }));
   }, []);
 
+  const updateEmployee = useCallback((employee) => {
+    if (!employee?.id) return;
+    setUser((current) => current?.id === employee.id ? { ...current, ...employee } : current);
+    setData((current) => {
+      const updatePerson = (person) => person.id === employee.id
+        ? {
+          ...person,
+          ...employee,
+          full_name: person.hide_full_name ? person.full_name : employee.full_name,
+          email: person.hide_email ? person.email : employee.email
+        }
+        : person;
+      return {
+        ...current,
+        people: current.people.map(updatePerson),
+        ...(current.workforce ? { workforce: current.workforce.map(updatePerson) } : {})
+      };
+    });
+  }, []);
+
   async function changeAvailabilityStatus(status) {
     try {
       const presence = await api("/presence", { method: "PATCH", body: JSON.stringify({ status }) });
@@ -460,6 +480,7 @@ export default function App() {
         onNotification={receiveNotification}
         onChatMessage={receiveChatMessage}
         onPresenceUpdate={updatePresence}
+        onEmployeeUpdate={updateEmployee}
         onMeetingEnded={(endedEvent) => {
           if (endedEvent?.event_id === meetingId) {
             const isCall = Boolean(endedEvent?.isCall || meeting.title?.includes(" and ") || (meeting.title || "").toLowerCase().includes("call"));
@@ -482,12 +503,12 @@ export default function App() {
         {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={(initial) => setNewEvent(initial || true)} onCancelEvent={cancelEvent} onAddAttendees={addMeetingAttendees} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={(initial) => setNewEvent(initial || true)} onJoinMeeting={joinMeeting} />}
         {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={(person) => navigate("chat", person ? { direct: person.id } : {})} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
-        {active === "settings" && <Settings user={user} people={data.workforce || data.people} onToast={setToast} onRefresh={refreshWorkspace} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} onChangePassword={() => navigate("change-password")} />}
+        {active === "settings" && <Settings user={user} people={data.workforce || data.people} onToast={setToast} onRefresh={refreshWorkspace} onEmployeeUpdate={updateEmployee} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} onChangePassword={() => navigate("change-password")} />}
         {active === "change-password" && <ChangePassword user={user} onBack={() => navigate("settings")} />}
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "change-password", "help"].includes(active) && <Home {...pageProps} />}
       </Shell>
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
+      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} onEmployeeUpdate={updateEmployee} />
       <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onOpen={() => openNotification(notification)} onClose={() => setNotification(null)} />
       {!tutorialOpen && <NotificationSetupPrompt onToast={setToast} />}

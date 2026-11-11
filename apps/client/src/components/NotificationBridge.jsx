@@ -3,14 +3,14 @@ import { io } from "socket.io-client";
 import { SOCKET_URL, socketOptions } from "../lib/api";
 import { dismissIncomingCallNotification, primeNotificationAudio, refreshNotificationSubscription, showIncomingCallNotification, showWorkspaceNotification, stopIncomingCallRingtone } from "../lib/notifications";
 
-export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded }) {
+export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded }) {
   const channelsRef = useRef(channels);
-  const callbacksRef = useRef({ onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded });
+  const callbacksRef = useRef({ onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded });
 
   useEffect(() => {
     channelsRef.current = channels;
-    callbacksRef.current = { onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded };
-  }, [channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onMeetingEnded]);
+    callbacksRef.current = { onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded };
+  }, [channels, onRefresh, onIncomingCall, onCallAnswered, onNotification, onChatMessage, onPresenceUpdate, onEmployeeUpdate, onMeetingEnded]);
 
   useEffect(() => {
     let lastSubscriptionRefresh = 0;
@@ -89,6 +89,9 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     });
     socket.on("employee:status-updated", () => {
       callbacksRef.current.onRefresh?.();
+    });
+    socket.on("employee:updated", (employee) => {
+      callbacksRef.current.onEmployeeUpdate?.(employee);
     });
     socket.on("profile:privacy-updated", (updatedUser) => {
       if (updatedUser?.id !== user.id) callbacksRef.current.onRefresh?.();
