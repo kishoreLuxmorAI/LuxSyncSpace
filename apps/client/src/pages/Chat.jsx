@@ -7,7 +7,6 @@ import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
 import { Modal } from "../components/Modal";
 import { eventTime } from "../lib/format";
-import { useEscapeKey } from "../lib/useEscapeKey";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
 
@@ -110,19 +109,6 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }, [mentionPeople, mentionQuery]);
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
-
-  useEscapeKey(() => {
-    if (fullPickerMessageId !== null) setFullPickerMessageId(null);
-    else if (reactionMessageId !== null) setReactionMessageId(null);
-    else if (messageMenuId !== null) setMessageMenuId(null);
-    else if (moreOpen) setMoreOpen(false);
-    else if (emojiOpen) setEmojiOpen(false);
-    else if (mentionQuery) setMentionQuery(null);
-    else if (messageSearchOpen) {
-      setMessageSearchOpen(false);
-      setMessageSearch("");
-    }
-  }, Boolean(fullPickerMessageId !== null || reactionMessageId !== null || messageMenuId !== null || moreOpen || emojiOpen || mentionQuery || messageSearchOpen));
 
   function openChannel(channelId) {
     setSelected(channelId);
@@ -384,14 +370,14 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }, [channels, people, onSelectConversation]);
 
   useEffect(() => {
-    if (initialChannelId && initialChannelId !== appliedInitialChannelRef.current) {
+    if (initialChannelId && (initialChannelId !== appliedInitialChannelRef.current || selected !== initialChannelId)) {
       if (channels.some((channel) => channel.id === initialChannelId)) {
         appliedInitialChannelRef.current = initialChannelId;
         appliedInitialPersonRef.current = null;
         setSelected(initialChannelId);
         setSelectedPerson(null);
       }
-    } else if (initialPersonId && initialPersonId !== appliedInitialPersonRef.current) {
+    } else if (initialPersonId && (initialPersonId !== appliedInitialPersonRef.current || selectedPerson?.id !== initialPersonId)) {
       const targetPerson = people.find((person) => person.id === initialPersonId);
       if (targetPerson) {
         appliedInitialPersonRef.current = initialPersonId;
@@ -400,7 +386,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         setSelectedPerson(targetPerson);
       }
     }
-  }, [initialChannelId, initialPersonId, channels, people]);
+  }, [initialChannelId, initialPersonId, channels, people, selected, selectedPerson?.id]);
 
   useEffect(() => {
     if (selected && channels.length > 0 && !channels.some((channel) => channel.id === selected)) {
