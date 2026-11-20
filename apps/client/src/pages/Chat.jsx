@@ -76,6 +76,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [emojiPickerPosition, setEmojiPickerPosition] = useState(null);
+  const [messagesConversationKey, setMessagesConversationKey] = useState(null);
   const [createGroup, setCreateGroup] = useState(false);
   const [manageMembers, setManageMembers] = useState(false);
   const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
@@ -93,12 +94,14 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   const [replyingTo, setReplyingTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [forwardingMessage, setForwardingMessage] = useState(null);
-  const endRef = useRef();
+  const messagesContainerRef = useRef(null);
+  const messageCacheRef = useRef(new Map());
   const textareaRef = useRef();
   const fileInputRef = useRef();
   const photoInputRef = useRef();
   const attachmentButtonRef = useRef(null);
   const attachmentMenuRef = useRef(null);
+  const channelMoreRef = useRef(null);
   const emojiPickerRef = useRef(null);
   const emojiButtonRef = useRef(null);
   const conversationRef = useRef(null);
@@ -121,6 +124,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return mentionPeople.filter((person) => `${person.full_name} ${person.employee_id || ""}`.toLowerCase().includes(term)).slice(0, 8);
   }, [mentionPeople, mentionQuery]);
   const activeChannel = channels.find((channel) => channel.id === selected);
+  const currentConversationKey = selected ? `channel:${selected}` : selectedPerson ? `direct:${selectedPerson.id}` : null;
+  const messagesReady = currentConversationKey !== null && messagesConversationKey === currentConversationKey;
+  const isLoadingMessages = currentConversationKey !== null && messagesConversationKey !== currentConversationKey;
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
 
   useLayoutEffect(() => {
@@ -223,6 +229,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }, Boolean(fullPickerMessageId !== null || reactionMessageId !== null || messageMenuId !== null || moreOpen || attachmentMenuOpen || emojiOpen || mentionQuery || messageSearchOpen));
 
   function openChannel(channelId) {
+    restoreCachedMessages(`channel:${channelId}`);
     setSelected(channelId);
     setSelectedPerson(null);
     appliedInitialChannelRef.current = channelId;
@@ -236,6 +243,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
   }
 
   function openPerson(person) {
+    restoreCachedMessages(`direct:${person.id}`);
     setSelected(null);
     setSelectedPerson(person);
     appliedInitialChannelRef.current = null;
@@ -268,10 +276,23 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return secondTime - firstTime;
   }), [filteredPeople, latestDirectMessages]);
   const visibleMessages = useMemo(() => {
+    const conversationMessages = messagesConversationKey === currentConversationKey ? messages : [];
     const term = messageSearch.trim().toLowerCase();
-    if (!term) return messages;
-    return messages.filter((item) => `${item.sender_name} ${item.body} ${item.file_name || ""}`.toLowerCase().includes(term));
-  }, [messages, messageSearch]);
+    if (!term) return conversationMessages;
+    return conversationMessages.filter((item) => `${item.sender_name} ${item.body} ${item.file_name || ""}`.toLowerCase().includes(term));
+  }, [messages, messagesConversationKey, currentConversationKey, messageSearch]);
+
+  useEffect(() => {
+    if (messagesConversationKey !== null) {
+      messageCacheRef.current.set(messagesConversationKey, messages);
+    }
+  }, [messages, messagesConversationKey]);
+
+  function restoreCachedMessages(conversationKey) {
+    if (!messageCacheRef.current.has(conversationKey)) return;
+    setMessages(messageCacheRef.current.get(conversationKey));
+    setMessagesConversationKey(conversationKey);
+  }
 
   useEffect(() => {
     setChannelMutedState(channels.find((channel) => channel.id === selected)?.muted || false);
@@ -333,6 +354,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         setAttachmentMenuOpen(false);
       }
 
+      if (moreOpen && channelMoreRef.current && !channelMoreRef.current.contains(event.target)) {
+        setMoreOpen(false);
+      }
+
       if (
         messageMenuRef.current &&
         !messageMenuRef.current.contains(event.target)
@@ -354,7 +379,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [attachmentMenuOpen]);
+  }, [attachmentMenuOpen, moreOpen]);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -482,6 +507,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       const personId = params.get("direct");
       const matchedChannel = channels.some((channel) => channel.id === channelId) ? channelId : null;
       const matchedPerson = people.find((person) => person.id === personId) || null;
+      if (matchedChannel) restoreCachedMessages(`channel:${matchedChannel}`);
+      else if (matchedPerson) restoreCachedMessages(`direct:${matchedPerson.id}`);
       setSelected(matchedChannel);
       setSelectedPerson(matchedPerson);
       appliedInitialChannelRef.current = matchedChannel;
@@ -497,6 +524,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       if (channels.some((channel) => channel.id === initialChannelId)) {
         appliedInitialChannelRef.current = initialChannelId;
         appliedInitialPersonRef.current = null;
+        restoreCachedMessages(`channel:${initialChannelId}`);
         setSelected(initialChannelId);
         setSelectedPerson(null);
       }
@@ -505,6 +533,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
       if (targetPerson) {
         appliedInitialPersonRef.current = initialPersonId;
         appliedInitialChannelRef.current = null;
+        restoreCachedMessages(`direct:${targetPerson.id}`);
         setSelected(null);
         setSelectedPerson(targetPerson);
       }
@@ -542,30 +571,71 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
 
   useEffect(() => {
     if (!selected) return;
-    setMessages([]);
+    const conversationKey = `channel:${selected}`;
+    let active = true;
     setChannelMembers([]);
-    Promise.all([api(`/channels/${selected}/messages`), api(`/channels/${selected}/members`)])
-      .then(([conversation, membership]) => { setMessages(conversation.messages); setChannelMembers(membership.members); onConversationRead?.("channel", selected); })
-      .catch((error) => onToast(error.message));
+    api(`/channels/${selected}/messages`)
+      .then(({ messages }) => {
+        if (!active) return;
+        messageCacheRef.current.set(conversationKey, messages);
+        setMessages(messages);
+        setMessagesConversationKey(conversationKey);
+        onConversationRead?.("channel", selected);
+      })
+      .catch((error) => {
+        if (!active) return;
+        if (!messageCacheRef.current.has(conversationKey)) {
+          setMessages([]);
+          setMessagesConversationKey(conversationKey);
+        }
+        onToast(error.message);
+      });
+    api(`/channels/${selected}/members`)
+      .then(({ members }) => {
+        if (active) setChannelMembers(members);
+      })
+      .catch((error) => {
+        if (active) onToast(error.message);
+      });
     socketRef.current?.emit("channel:join", selected);
     return () => {
+      active = false;
       socketRef.current?.emit("channel:leave", selected);
     };
   }, [selected]);
 
   useEffect(() => {
     if (!selectedPerson) return;
-    setMessages([]);
-    api(`/direct/${selectedPerson.id}`).then(({ messages }) => { setMessages(messages); onConversationRead?.("direct", selectedPerson.id); }).catch((error) => onToast(error.message));
-  }, [selectedPerson]);
+    const personId = selectedPerson.id;
+    const conversationKey = `direct:${personId}`;
+    let active = true;
+    api(`/direct/${personId}`)
+      .then(({ messages }) => {
+        if (!active) return;
+        messageCacheRef.current.set(conversationKey, messages);
+        setMessages(messages);
+        setMessagesConversationKey(conversationKey);
+        onConversationRead?.("direct", personId);
+      })
+      .catch((error) => {
+        if (!active) return;
+        if (!messageCacheRef.current.has(conversationKey)) {
+          setMessages([]);
+          setMessagesConversationKey(conversationKey);
+        }
+        onToast(error.message);
+      });
+    return () => { active = false; };
+  }, [selectedPerson?.id]);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [messages]);
+  useLayoutEffect(() => {
+    if (!messagesReady || !messagesContainerRef.current) return;
+    messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+  }, [messages.length, messagesConversationKey, currentConversationKey, messagesReady]);
 
   async function send(event) {
     event.preventDefault();
-    if ((!message.trim() && !attachment) || (!selected && !selectedPerson)) return;
+    if ((!message.trim() && !attachment) || (!selected && !selectedPerson) || !messagesReady) return;
     const body = message;
     const selectedAttachment = attachment;
     const selectedReply = replyingTo;
@@ -991,8 +1061,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
             <small>{visibleMessages.length} result{visibleMessages.length === 1 ? "" : "s"}</small>
             <button onClick={() => { setMessageSearchOpen(false); setMessageSearch(""); }}><X size={16} /></button>
           </div>}
-          <div className="messages">
+          <div className="messages" ref={messagesContainerRef}>
             <div className="channel-intro">{selectedPerson ? <Avatar person={selectedPerson} size="lg" showPresence /> : <span><Hash size={26} /></span>}<h2>{selectedPerson ? `Conversation with ${selectedPerson.full_name}` : `Welcome to #${activeChannel?.name}`}</h2><p>{selectedPerson ? "This is a private conversation between the two of you." : activeChannel?.description}</p></div>
+            {isLoadingMessages && <div className="conversation-loading" role="status">Loading messages…</div>}
             {visibleMessages.map((item, index) => {
               const previous = visibleMessages[index - 1];
               const startsNewDay = !previous || !isSameMessageDay(previous.sent_at, item.sent_at);
@@ -1101,8 +1172,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
                 </div>
               </Fragment>;
             })}
-            {messageSearch && !visibleMessages.length && <div className="conversation-search-empty"><Search size={23} /><b>No matching messages</b><span>Try another name, phrase, or file name.</span></div>}
-            <div ref={endRef} />
+            {messageSearch && !isLoadingMessages && !visibleMessages.length && <div className="conversation-search-empty"><Search size={23} /><b>No matching messages</b><span>Try another name, phrase, or file name.</span></div>}
           </div>
           <form className="message-composer" ref={composerRef} onSubmit={send}>
             {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
@@ -1134,7 +1204,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
             <div className="composer-toolbar"><span>
               <button ref={attachmentButtonRef} type="button" className={uploading ? "tool-busy" : attachmentMenuOpen ? "active" : ""} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading} title="Attach a file" aria-haspopup="menu" aria-expanded={attachmentMenuOpen}><Paperclip size={18} /></button>
               <button ref={emojiButtonRef} type="button" className={emojiOpen ? "active" : ""} onClick={() => setEmojiOpen((open) => !open)} title="Choose an emoji" aria-haspopup="dialog" aria-expanded={emojiOpen}><Smile size={18} /></button>
-            </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading}><Send size={17} /></button></div>
+            </span><button className="send-button" disabled={(!message.trim() && !attachment) || busy || uploading || !messagesReady}><Send size={17} /></button></div>
             {attachmentMenuOpen && <div ref={attachmentMenuRef} role="menu" aria-label="Attach a file" style={{ position: "absolute", left: 8, bottom: "calc(100% + 6px)", zIndex: 25, width: 210, padding: 5, border: "1px solid #d8dee8", borderRadius: 9, background: "white", boxShadow: "0 12px 30px rgba(20,34,58,.16)" }}>
               <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); fileInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Upload from This Device</button>
               <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); photoInputRef.current?.click(); }} style={{ width: "100%", height: 36, padding: "0 9px", display: "flex", alignItems: "center", justifyContent: "flex-start", fontSize: 11 }}>Photos</button>
@@ -1167,7 +1237,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, directCo
         <div className="detail-actions">
           <button className={channelMuted ? "active" : ""} onClick={toggleMute}>{channelMuted ? <BellOff size={18} /> : <Bell size={18} />}<span>{channelMuted ? "Unmute" : "Mute"}</span></button>
           <button className={messageSearchOpen ? "active" : ""} onClick={() => setMessageSearchOpen((open) => !open)}><Search size={18} /><span>Search</span></button>
-          <div className="channel-more-wrap"><button className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
+          <div className="channel-more-wrap" ref={channelMoreRef}><button className={moreOpen ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={18} /><span>More</span></button>
             {moreOpen && <div className="channel-more-menu">
               {canCreateGroup && <button onClick={() => { setManageMembers(true); setMoreOpen(false); }}><UserPlus size={16} /> Manage members</button>}
               <button onClick={copyChannelLink}><Hash size={16} /> Copy channel link</button>

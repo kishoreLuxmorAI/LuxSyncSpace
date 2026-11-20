@@ -335,6 +335,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .conversation-employee-id { display: block; margin-top: 2px; color: #53647d; font-size: 9px; font-weight: 700; }
 .members-button { border: 0; background: #f4f6f9; height: 32px; padding: 0 10px; border-radius: 7px; color: #687489; display: flex; align-items: center; gap: 5px; font-size: 10px; }
 .messages { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #9faabd #eef1f5; padding: 20px clamp(18px, 3vw, 38px); }
+.conversation-loading { min-height: 120px; display: grid; place-items: center; color: #8792a3; font-size: 11px; }
 .channel-intro { padding: 25px 0 19px; }
 .channel-intro > span { width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; background: #edf2ff; color: var(--blue); margin-bottom: 12px; }
 .channel-intro h2 { font-size: 19px; margin: 0 0 5px; }
