@@ -801,6 +801,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .invite-settings-form { max-width: 800px; }
 .invite-settings-form > .button { justify-self: start; }
 .reset-section-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; }.reset-section-head .button { flex: none; font-size: 9px; }
+.refresh-icon.is-spinning { animation: refreshSpin .8s linear infinite; }
 .reset-request-list { display: grid; }.reset-request-row { min-height: 76px; padding: 13px 20px; border-bottom: 1px solid var(--soft-line); display: grid; grid-template-columns: 38px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
 .reset-request-icon { width: 36px; height: 36px; border-radius: 9px; color: #7450b9; background: #f2edff; display: grid; place-items: center; }.reset-request-row h3 { margin: 0 0 3px; font-size: 11px; }.reset-request-row p { margin: 0 0 3px; color: #667287; font-size: 9px; }.reset-request-row small { color: #929cab; font-size: 8px; }
 .reset-status { padding: 4px 8px; border-radius: 12px; font-size: 8px; font-weight: 800; text-transform: capitalize; }.reset-status-pending { color: #a05d0d; background: #fff3df; }.reset-status-completed { color: #287559; background: #e5f7ef; }.reset-completed-at { max-width: 105px; text-align: right; }
@@ -869,6 +870,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } }
 @keyframes notificationIn { from { opacity: 0; transform: translateY(-10px) scale(.98); } }
 @keyframes pulse { 50% { transform: scale(1.06); box-shadow: 0 0 0 8px rgba(37,87,214,.1); } }
+@keyframes refreshSpin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1180px) {
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
