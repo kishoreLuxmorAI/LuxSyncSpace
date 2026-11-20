@@ -373,7 +373,7 @@ workspaceRouter.post("/channels", async (req, res, next) => {
     if (!groupRoles.has(role)) return res.status(403).json({ error: "Your role does not have permission to create groups" });
     const input = z.object({
       name: z.string().trim().min(2, "Group name must contain at least 2 letters or numbers").max(60, "Group name must be 60 characters or fewer").regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Group name can only contain letters, numbers, and single hyphens"),
-      description: z.string().trim().max(300).default(""),
+      description: z.string().trim().max(500, "Group description must be 500 characters or fewer").default(""),
       memberIds: z.array(z.string().uuid()).default([]),
       isPrivate: z.boolean().default(false)
     }).parse(req.body);
