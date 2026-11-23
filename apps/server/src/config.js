@@ -68,6 +68,7 @@ export const config = {
     subject: normalizeVapidSubject(process.env.VAPID_SUBJECT || process.env.SMTP_FROM_EMAIL)
   },
   webrtcIceServers: parseIceServers(process.env.WEBRTC_ICE_SERVERS_JSON),
+  deepgramApiKey: process.env.DEEPGRAM_API_KEY || "",
   root,
 };
 

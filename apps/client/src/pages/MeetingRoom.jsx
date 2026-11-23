@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Check, ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, Minimize, MonitorUp, PhoneOff,
-  Send, Users, Video, VideoOff, Volume2, VolumeX, X
+  Captions, CaptionsOff, Check, ChevronDown, Copy, Expand, Hand, MessageSquareText, Mic, MicOff, Minimize,
+  MonitorUp, PhoneOff, Send, Users, Video, VideoOff, Volume2, VolumeX, X
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, SOCKET_URL, socketOptions } from "../lib/api";
@@ -24,6 +24,8 @@ const VIDEO_CONSTRAINTS = {
   height: { ideal: 360, max: 540 },
   frameRate: { ideal: 15, max: 20 }
 };
+const CAPTION_SAMPLE_RATE = 16000;
+const CAPTION_DISPLAY_MS = 6500;
 
 export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onEndMeeting, onToast, skipLobby = false }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
@@ -52,6 +54,8 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const [chat, setChat] = useState([]);
   const [chatMessage, setChatMessage] = useState("");
   const [meetingChatPopup, setMeetingChatPopup] = useState(null);
+  const [captionsEnabled, setCaptionsEnabled] = useState(false);
+  const [captionLines, setCaptionLines] = useState([]);
   const [status, setStatus] = useState("Connecting securely…");
   const [elapsed, setElapsed] = useState("00:00");
   const [confirmEnd, setConfirmEnd] = useState(false);
@@ -72,6 +76,112 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
   const chatBottomRef = useRef(null);
   const controlsIdleTimerRef = useRef(null);
+  const captionsEnabledRef = useRef(false);
+  const captionAudioContextRef = useRef(null);
+  const captionPipelinesRef = useRef(new Map());
+
+  function stopCaptionPipeline(sourceSocketId, clearCaption = true) {
+    const pipeline = captionPipelinesRef.current.get(sourceSocketId);
+    if (!pipeline) return;
+    captionPipelinesRef.current.delete(sourceSocketId);
+    pipeline.processor.onaudioprocess = null;
+    pipeline.source.disconnect();
+    pipeline.processor.disconnect();
+    pipeline.silentGain.disconnect();
+    socketRef.current?.emit("meeting:captions:stop", { sourceSocketId });
+    if (clearCaption) setCaptionLines((current) => current.filter((caption) => caption.sourceSocketId !== sourceSocketId));
+  }
+
+  function stopAllCaptionPipelines(clearCaptions = true) {
+    for (const sourceSocketId of [...captionPipelinesRef.current.keys()]) stopCaptionPipeline(sourceSocketId, clearCaptions);
+  }
+
+  function disableCaptions() {
+    captionsEnabledRef.current = false;
+    stopAllCaptionPipelines(false);
+    setCaptionsEnabled(false);
+    setCaptionLines([]);
+    const context = captionAudioContextRef.current;
+    captionAudioContextRef.current = null;
+    if (context && context.state !== "closed") {
+      context.close().catch((error) => console.warn("Could not close the caption audio context", error));
+    }
+  }
+
+  async function toggleCaptions() {
+    if (captionsEnabledRef.current) {
+      disableCaptions();
+      return;
+    }
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) {
+      onToast?.("Live captions are not supported by this browser.");
+      return;
+    }
+    const context = new AudioContextConstructor();
+    captionAudioContextRef.current = context;
+    captionsEnabledRef.current = true;
+    setCaptionsEnabled(true);
+    onToast?.("Captions enabled. Incoming participant audio is sent to Deepgram for English transcription.");
+    try {
+      await context.resume();
+      if (captionAudioContextRef.current !== context) return;
+    } catch (error) {
+      if (captionAudioContextRef.current === context) {
+        console.error("Could not start the caption audio context", error);
+        disableCaptions();
+        onToast?.("Could not start live captions. Check browser audio support and try again.");
+      }
+      return;
+    }
+  }
+
+  function startCaptionPipeline(participant, track, context) {
+    const socket = socketRef.current;
+    if (!socket?.connected || captionPipelinesRef.current.has(participant.socketId)) return;
+    const source = context.createMediaStreamSource(new MediaStream([track]));
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    const silentGain = context.createGain();
+    silentGain.gain.value = 0;
+    const pipeline = { source, processor, silentGain, track, ready: false };
+    captionPipelinesRef.current.set(participant.socketId, pipeline);
+
+    processor.onaudioprocess = (event) => {
+      if (!captionsEnabledRef.current || !pipeline.ready || !socket.connected || track.readyState !== "live") return;
+      const input = event.inputBuffer.getChannelData(0);
+      const ratio = context.sampleRate / CAPTION_SAMPLE_RATE;
+      const sampleCount = Math.floor(input.length / ratio);
+      if (!sampleCount) return;
+      const pcm = new ArrayBuffer(sampleCount * 2);
+      const view = new DataView(pcm);
+      for (let index = 0; index < sampleCount; index += 1) {
+        const inputPosition = index * ratio;
+        const inputIndex = Math.floor(inputPosition);
+        const fraction = inputPosition - inputIndex;
+        const first = input[inputIndex];
+        const second = input[Math.min(inputIndex + 1, input.length - 1)];
+        const sample = Math.max(-1, Math.min(1, first + (second - first) * fraction));
+        view.setInt16(index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      }
+      socket.emit("meeting:captions:audio", { sourceSocketId: participant.socketId, audio: pcm });
+    };
+
+    source.connect(processor);
+    processor.connect(silentGain);
+    silentGain.connect(context.destination);
+    socket.emit("meeting:captions:start", { sourceSocketId: participant.socketId }, (response) => {
+      if (captionPipelinesRef.current.get(participant.socketId) !== pipeline) return;
+      if (!response?.ok) {
+        stopCaptionPipeline(participant.socketId);
+        if (response?.code === "CAPTIONS_UNAVAILABLE") {
+          disableCaptions();
+        }
+        onToast?.(response?.error || "Could not start captions for this participant.");
+        return;
+      }
+      pipeline.ready = true;
+    });
+  }
 
   function showFullscreenControls() {
     if (!document.fullscreenElement) return;
@@ -458,7 +568,25 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
         if (incoming.sender_id !== user.id && panelRef.current !== "chat") setMeetingChatPopup(incoming);
       });
       socket.on("meeting:hand", ({ socketId, raised: isRaised }) => upsertParticipant(socketId, { raised: isRaised }));
+      socket.on("meeting:captions:transcript", ({ sourceSocketId, speakerName, transcript, isFinal }) => {
+        if (!captionsEnabledRef.current || !transcript) return;
+        const now = Date.now();
+        const interimId = `interim-${sourceSocketId}`;
+        setCaptionLines((current) => {
+          const next = current.filter((caption) => now - caption.updatedAt < CAPTION_DISPLAY_MS && caption.id !== interimId);
+          if (isFinal) {
+            next.push({ id: `final-${sourceSocketId}-${now}`, sourceSocketId, speakerName, text: transcript, updatedAt: now });
+          } else {
+            next.push({ id: interimId, sourceSocketId, speakerName, text: transcript, updatedAt: now });
+          }
+          return next.slice(-3);
+        });
+      });
+      socket.on("meeting:captions:error", ({ error }) => {
+        if (captionsEnabledRef.current) onToast?.(error || "Live captions encountered a transcription error.");
+      });
       socket.on("meeting:cancelled", ({ body }) => {
+        disableCaptions();
         setStatus("Meeting cancelled");
         setParticipants([]);
         peersRef.current.forEach((peer) => peer.close());
@@ -467,6 +595,7 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
         window.setTimeout(onLeave, 1800);
       });
       socket.on("meeting:ended", ({ message, isCall }) => {
+        disableCaptions();
         const endedText = isCall || isDirectCall ? "Call ended" : "Meeting ended";
         setStatus(endedText);
         setParticipants([]);
@@ -510,6 +639,46 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, [inLobby, meeting.id, user.id]);
+
+  useEffect(() => {
+    if (!captionsEnabled || inLobby) {
+      stopAllCaptionPipelines();
+      return;
+    }
+    const context = captionAudioContextRef.current;
+    if (!context || context.state === "closed") return;
+    const desiredTracks = new Map();
+    participants.forEach((participant) => {
+      const track = participant.stream?.getAudioTracks().find((audioTrack) => audioTrack.readyState === "live");
+      if (track) desiredTracks.set(participant.socketId, { participant, track });
+    });
+
+    captionPipelinesRef.current.forEach((pipeline, sourceSocketId) => {
+      if (desiredTracks.get(sourceSocketId)?.track !== pipeline.track) stopCaptionPipeline(sourceSocketId);
+    });
+    desiredTracks.forEach(({ participant, track }) => {
+      if (!captionPipelinesRef.current.has(participant.socketId)) startCaptionPipeline(participant, track, context);
+    });
+  }, [participants, captionsEnabled, inLobby]);
+
+  useEffect(() => {
+    if (!captionsEnabled || captionLines.length === 0) return undefined;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setCaptionLines((current) => current.filter((caption) => now - caption.updatedAt < CAPTION_DISPLAY_MS));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [captionsEnabled, captionLines.length > 0]);
+
+  useEffect(() => () => {
+    captionsEnabledRef.current = false;
+    stopAllCaptionPipelines(false);
+    const context = captionAudioContextRef.current;
+    captionAudioContextRef.current = null;
+    if (context && context.state !== "closed") {
+      context.close().catch((error) => console.warn("Could not close the caption audio context", error));
+    }
+  }, []);
 
   function toggleMic() {
     const next = !micOn;
@@ -776,6 +945,11 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
       <main className={`meeting-stage ${panel ? "with-panel" : ""}`}>
         <section className={`meeting-grid participants-${Math.min(allParticipants.length, 6)}`}>
           {allParticipants.map((participant) => <VideoTile participant={participant} key={participant.socketId} localVideoRef={participant.local ? localVideoRef : null} cameraOn={participant.local ? cameraOn : true} speakerOn={speakerOn} />)}
+          {captionsEnabled && <div className="meeting-captions" role="status" aria-live="polite">
+            {captionLines.length
+              ? captionLines.map((caption) => <p key={caption.id}><b>{caption.speakerName}</b><span>{caption.text}</span></p>)
+              : <p className="meeting-captions-listening">Listening for speech…</p>}
+          </div>}
         </section>
         {panel && <aside className="meeting-panel">
           <header><div><b>{panel === "people" ? "Participants" : panel === "invite" ? "Invite people" : "Meeting chat"}</b><small>{allParticipants.length} in this meeting</small></div><button onClick={() => setPanel(null)}><X size={18} /></button></header>
@@ -829,6 +1003,14 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
           {!isAudioOnly && <MeetingControl active={!cameraOn} onClick={toggleCamera} icon={cameraOn ? Video : VideoOff} label={cameraOn ? "Camera" : "Start video"} />}
           {!isAudioOnly && <MeetingControl active={screenOn} onClick={shareScreen} icon={MonitorUp} label={screenOn ? "Stop sharing" : "Share screen"} />}
           <MeetingControl active={raised} onClick={toggleHand} icon={Hand} label={raised ? "Lower hand" : "Raise hand"} />
+          <MeetingControl
+            active={captionsEnabled}
+            className="meeting-control-cc"
+            onClick={toggleCaptions}
+            icon={captionsEnabled ? Captions : CaptionsOff}
+            label={captionsEnabled ? "CC On" : "CC Off"}
+            title={captionsEnabled ? "Turn captions off" : "Turn captions on"}
+          />
           <MeetingControl active={panel === "chat"} onClick={() => setPanel(panel === "chat" ? null : "chat")} icon={MessageSquareText} label="Chat" />
           <MeetingControl active={panel === "people"} onClick={() => setPanel(panel === "people" ? null : "people")} icon={Users} label="People" />
           <MeetingControl onClick={toggleFullscreen} icon={isFullscreen ? Minimize : Expand} label={isFullscreen ? "Exit full screen" : "Full screen"} />
@@ -843,8 +1025,8 @@ export function MeetingRoom({ meeting, user, people = [], onInvite, onLeave, onE
   );
 }
 
-function MeetingControl({ active, onClick, icon: Icon, label }) {
-  return <button className={active ? "active" : ""} onClick={onClick}><span><Icon size={20} /></span><small>{label}</small></button>;
+function MeetingControl({ active, onClick, icon: Icon, label, title, className = "" }) {
+  return <button type="button" className={`${active ? "active " : ""}${className}`} onClick={onClick} aria-pressed={Boolean(active)} title={title || label}><span><Icon size={20} /></span><small>{label}</small></button>;
 }
 
 function VideoTile({ participant, localVideoRef, cameraOn, speakerOn }) {

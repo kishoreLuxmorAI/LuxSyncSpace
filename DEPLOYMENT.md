@@ -30,6 +30,8 @@ REDIS_URL=rediss://...
 
 Create a managed Redis database, such as Upstash Redis from the Vercel Marketplace, and use its `rediss://` connection URL. Also configure the existing ZeptoMail, VAPID, and WebRTC variables. Never commit the `.env` file.
 
+To enable listener-only live captions, set `DEEPGRAM_API_KEY` in the backend environment. While a listener has CC enabled, that listener's individual incoming participant audio tracks are sent to Deepgram for live English transcription; captions and CC state are never broadcast to the meeting room. Do not configure this key in the frontend.
+
 For dependable calls outside the office network, configure a production TURN service in `WEBRTC_ICE_SERVERS_JSON`. STUN alone cannot connect users behind every firewall or mobile carrier.
 
 Example shape:

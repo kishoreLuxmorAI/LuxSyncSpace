@@ -10,6 +10,7 @@ import { Server } from "socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
 import jwt from "jsonwebtoken";
+import { DeepgramClient } from "@deepgram/sdk";
 import { config } from "./config.js";
 import { authRouter } from "./routes/auth.js";
 import { workspaceRouter } from "./routes/workspace.js";
@@ -35,6 +36,7 @@ const corsOptions = {
   allowedHeaders: ["Authorization", "Content-Type"]
 };
 const io = new Server(server, { cors: corsOptions });
+const deepgram = config.deepgramApiKey ? new DeepgramClient({ apiKey: config.deepgramApiKey }) : null;
 if (config.redisUrl) {
   const redisOptions = { maxRetriesPerRequest: null, enableReadyCheck: false };
   const pubClient = new Redis(config.redisUrl, redisOptions);
@@ -71,6 +73,18 @@ io.use(async (socket, next) => {
   }
 });
 io.on("connection", (socket) => {
+  socket.data.captionSessions = new Map();
+  function closeCaptionSession(sourceSocketId) {
+    const session = socket.data.captionSessions.get(sourceSocketId);
+    if (!session) return;
+    socket.data.captionSessions.delete(sourceSocketId);
+    session.connection?.close();
+  }
+
+  function closeAllCaptionSessions() {
+    for (const sourceSocketId of socket.data.captionSessions.keys()) closeCaptionSession(sourceSocketId);
+  }
+
   socket.join(`user:${socket.auth.userId}`);
   socket.join(`org:${socket.auth.organizationId}`);
   cached(`socket-memberships:${socket.auth.organizationId}`, 10_000, () =>
@@ -226,6 +240,135 @@ io.on("connection", (socket) => {
     io.to(target).emit("meeting:signal", { from: socket.id, signal, user: socket.data.meetingProfile });
   });
 
+  socket.on("meeting:captions:start", async (payload = {}, acknowledge = () => {}) => {
+    const sourceSocketId = payload?.sourceSocketId;
+    const acknowledgeResult = typeof acknowledge === "function" ? acknowledge : () => {};
+    try {
+      if (!socket.meetingRoom || typeof sourceSocketId !== "string" || sourceSocketId === socket.id) {
+        return acknowledgeResult({ ok: false, error: "Could not start captions for this participant." });
+      }
+      if (!deepgram) {
+        return acknowledgeResult({ ok: false, code: "CAPTIONS_UNAVAILABLE", error: "Live captions are not configured. Set DEEPGRAM_API_KEY on the server." });
+      }
+      const existing = socket.data.captionSessions.get(sourceSocketId);
+      if (existing) return acknowledgeResult({ ok: true });
+
+      if (socket.data.captionSessions.size >= 12) {
+        return acknowledgeResult({ ok: false, error: "Captions support up to 12 other participants at a time." });
+      }
+
+      const session = { connection: null, speakerName: "Participant", ready: false };
+      socket.data.captionSessions.set(sourceSocketId, session);
+      const roomId = socket.meetingRoom;
+      const roomParticipants = await io.in(roomId).fetchSockets();
+      const source = roomParticipants.find((participant) => participant.id === sourceSocketId);
+      if (!source?.data.meetingProfile || socket.data.captionSessions.get(sourceSocketId) !== session) {
+        closeCaptionSession(sourceSocketId);
+        return acknowledgeResult({ ok: false, error: "This participant is no longer connected." });
+      }
+      session.speakerName = source.data.meetingProfile.full_name || "Participant";
+
+      const connection = await deepgram.listen.v1.connect({
+        model: "nova-3",
+        language: "en-US",
+        encoding: "linear16",
+        sample_rate: 16000,
+        channels: 1,
+        interim_results: "true",
+        smart_format: "true"
+      });
+      if (!socket.connected || socket.data.captionSessions.get(sourceSocketId) !== session) {
+        connection.close();
+        return acknowledgeResult({ ok: false, error: "The caption stream was closed before it connected." });
+      }
+      session.connection = connection;
+
+      connection.on("message", (message) => {
+        if (message.type === "Error") {
+          console.error("Deepgram returned a caption error", message.description);
+          closeCaptionSession(sourceSocketId);
+          socket.emit("meeting:captions:error", {
+            sourceSocketId,
+            terminal: true,
+            error: "Live transcription rejected this audio stream. Turn CC off and on to retry."
+          });
+          return;
+        }
+        if (message.type !== "Results") return;
+        const transcript = message.channel?.alternatives?.[0]?.transcript?.trim();
+        if (!transcript || socket.data.captionSessions.get(sourceSocketId) !== session) return;
+        socket.emit("meeting:captions:transcript", {
+          sourceSocketId,
+          speakerName: session.speakerName,
+          transcript,
+          isFinal: Boolean(message.is_final || message.speech_final)
+        });
+      });
+      connection.on("open", () => {
+        if (socket.data.captionSessions.get(sourceSocketId) === session) session.ready = true;
+      });
+      connection.on("error", (error) => {
+        console.error("Deepgram live caption stream error", error);
+        if (session.ready && socket.connected && socket.data.captionSessions.get(sourceSocketId) === session) {
+          socket.emit("meeting:captions:error", { sourceSocketId, error: "Live captions temporarily lost their transcription connection." });
+        }
+      });
+      connection.on("close", () => {
+        if (socket.data.captionSessions.get(sourceSocketId) !== session) return;
+        session.ready = false;
+        if (socket.connected) socket.emit("meeting:captions:error", { sourceSocketId, error: "Live captions lost their transcription connection and are reconnecting." });
+      });
+
+      connection.connect();
+      let timeout;
+      try {
+        await Promise.race([
+          connection.waitForOpen(),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Deepgram connection timed out")), 10_000);
+          })
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!socket.connected || socket.data.captionSessions.get(sourceSocketId) !== session) {
+        closeCaptionSession(sourceSocketId);
+        return acknowledgeResult({ ok: false, error: "The caption stream was closed before it connected." });
+      }
+      session.ready = true;
+      acknowledgeResult({ ok: true });
+    } catch (error) {
+      closeCaptionSession(sourceSocketId);
+      console.error("Could not start Deepgram caption stream", error);
+      acknowledgeResult({ ok: false, error: "Could not connect to live speech transcription. Please try CC again." });
+    }
+  });
+
+  socket.on("meeting:captions:audio", (payload = {}) => {
+    const { sourceSocketId, audio } = payload || {};
+    if (!socket.meetingRoom || typeof sourceSocketId !== "string") return;
+    const session = socket.data.captionSessions.get(sourceSocketId);
+    if (!session?.ready || session.connection.readyState !== 1) return;
+    let buffer;
+    if (Buffer.isBuffer(audio)) buffer = audio;
+    else if (audio instanceof ArrayBuffer) buffer = Buffer.from(audio);
+    else if (ArrayBuffer.isView(audio)) buffer = Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength);
+    else return;
+    if (buffer.length === 0 || buffer.length > 8192) return;
+    try {
+      if (session.connection.socket.bufferedAmount > 262144) return;
+      session.connection.sendMedia(buffer);
+    } catch (error) {
+      console.error("Could not forward audio to Deepgram", error);
+      socket.emit("meeting:captions:error", { sourceSocketId, error: "Live captions could not process this participant's audio." });
+    }
+  });
+
+  socket.on("meeting:captions:stop", (payload = {}) => {
+    const { sourceSocketId } = payload || {};
+    if (typeof sourceSocketId === "string") closeCaptionSession(sourceSocketId);
+  });
+
   socket.on("meeting:chat", ({ body }) => {
     const message = String(body || "").trim().slice(0, 2000);
     if (!socket.meetingRoom || !message) return;
@@ -244,6 +387,7 @@ io.on("connection", (socket) => {
 
   async function handleMeetingExit() {
     if (!socket.meetingRoom) return;
+    closeAllCaptionSessions();
     const room = socket.meetingRoom;
     socket.to(room).emit("meeting:user-left", { socketId: socket.id });
     socket.leave(room);

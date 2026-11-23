@@ -10,6 +10,7 @@
     "db:seed": "node src/db/seed.js"
   },
   "dependencies": {
+    "@deepgram/sdk": "^5.20.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "bcryptjs": "^2.4.3",
     "compression": "^1.8.1",
