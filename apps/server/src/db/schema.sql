@@ -43,6 +43,26 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_email BOOLEAN NOT NULL DEFAULT F
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed_at TIMESTAMPTZ DEFAULT NOW();
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_org_employee_id ON users(organization_id, employee_id) WHERE employee_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_organization ON users(organization_id, full_name);
+WITH employee_sequences AS (
+  SELECT organization_id,
+         COALESCE(MAX(NULLIF(regexp_replace(employee_id, '\D', '', 'g'), '')::int), 1000) AS max_id
+  FROM users
+  GROUP BY organization_id
+),
+missing_employee_ids AS (
+  SELECT u.id,
+         sequence.max_id + ROW_NUMBER() OVER (
+           PARTITION BY u.organization_id
+           ORDER BY u.created_at, u.id
+         ) AS generated_id
+  FROM users u
+  JOIN employee_sequences sequence ON sequence.organization_id = u.organization_id
+  WHERE u.employee_id IS NULL OR btrim(u.employee_id) = ''
+)
+UPDATE users u
+SET employee_id = 'LUX-' || LPAD(missing.generated_id::text, 4, '0')
+FROM missing_employee_ids missing
+WHERE u.id = missing.id;
 
 CREATE TABLE IF NOT EXISTS mail_threads (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -109,6 +129,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_one_pending
   ON password_reset_requests(user_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_password_reset_org_status
   ON password_reset_requests(organization_id, status, requested_at DESC);
+
+CREATE TABLE IF NOT EXISTS password_reset_otps (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  otp_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_otps_expiry ON password_reset_otps(expires_at);
 
 CREATE TABLE IF NOT EXISTS support_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

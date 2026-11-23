@@ -26,6 +26,9 @@ try {
   for (const collection of ["people", "channels", "events", "announcements"]) {
     if (!Array.isArray(workspace[collection])) throw new Error(`Missing ${collection} collection`);
   }
+  if (!workspace.directConversationTimes || Array.isArray(workspace.directConversationTimes) || typeof workspace.directConversationTimes !== "object") {
+    throw new Error("Missing direct conversation timestamps");
+  }
   if (!login.user.employee_id || !login.user.role) throw new Error("Employee profile fields are missing");
   const duplicateInvite = await fetch(`${base}/invitations`, {
     method: "POST",
