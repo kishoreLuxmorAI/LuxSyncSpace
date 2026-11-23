@@ -155,7 +155,7 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
       await enableNotifications();
       onToast("Notifications and the LuxSyncspace sound are enabled");
     } catch (error) {
-      setNotificationsOn(false);
+      setNotificationsOn(notificationsEnabled());
       onToast(error.message);
     }
   }
@@ -231,18 +231,34 @@ export function Settings({ user, people, onToast, onRefresh, onEmployeeUpdate, o
 
   async function deleteEmployee() {
     if (!pendingDelete) return;
+    const employeeToDelete = pendingDelete;
     setBusy(true);
+    setPendingDelete(null);
+    setSelected(null);
+    setEditing(null);
+    if (onEmployeeUpdate) {
+      onEmployeeUpdate({
+        ...employeeToDelete,
+        employment_status: "deleted",
+        deleted_at: new Date().toISOString(),
+        offboarded_at: null,
+        presence: "offline",
+        availability_status: "offline"
+      });
+    }
+    onToast("Deleting employee...");
     try {
-      const result = await api(`/employees/${pendingDelete.id}/employment`, {
+      const result = await api(`/employees/${employeeToDelete.id}/employment`, {
         method: "PATCH",
         body: JSON.stringify({ status: "deleted" })
       });
-      setPendingDelete(null);
-      setSelected(null);
-      setEditing(null);
-      await onRefresh();
+      if (onEmployeeUpdate) onEmployeeUpdate(result.employee);
+      if (!onEmployeeUpdate) await onRefresh();
       onToast(result.message || "Employee deleted");
-    } catch (error) { onToast(error.message); }
+    } catch (error) {
+      if (onEmployeeUpdate) onEmployeeUpdate(employeeToDelete);
+      onToast(error.message);
+    }
     finally { setBusy(false); }
   }
 

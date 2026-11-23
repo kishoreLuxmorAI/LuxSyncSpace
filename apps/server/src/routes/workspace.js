@@ -729,14 +729,6 @@ workspaceRouter.patch("/employees/:id/employment", async (req, res, next) => {
     const employeeId = z.string().uuid().parse(req.params.id);
     const { status } = z.object({ status: z.enum(["active", "offboarded", "deleted"]) }).parse(req.body);
     if (employeeId === req.auth.userId) return res.status(400).json({ error: "You cannot change your own employment status" });
-    const [target] = await sql`
-      SELECT id, role, employment_status FROM users
-      WHERE id = ${employeeId} AND organization_id = ${req.auth.organizationId}
-    `;
-    if (!target) return res.status(404).json({ error: "Employee not found" });
-    if (target.role === "senior_leader" && role !== "senior_leader") {
-      return res.status(403).json({ error: "Only a senior administrator can manage this account" });
-    }
     const [employee] = await sql`
       UPDATE users
       SET employment_status = ${status},
@@ -745,9 +737,21 @@ workspaceRouter.patch("/employees/:id/employment", async (req, res, next) => {
           presence = CASE WHEN ${status} = 'active' THEN presence ELSE 'offline' END,
           availability_status = CASE WHEN ${status} = 'active' THEN availability_status ELSE 'offline' END
       WHERE id = ${employeeId} AND organization_id = ${req.auth.organizationId}
+        AND (role <> 'senior_leader' OR ${role} = 'senior_leader')
       RETURNING id, employee_id, email, full_name, title, department, role, initials, avatar_color,
                 presence, availability_status, employment_status, offboarded_at, deleted_at
     `;
+    if (!employee) {
+      const [target] = await sql`
+        SELECT role FROM users
+        WHERE id = ${employeeId} AND organization_id = ${req.auth.organizationId}
+      `;
+      if (!target) return res.status(404).json({ error: "Employee not found" });
+      if (target.role === "senior_leader" && role !== "senior_leader") {
+        return res.status(403).json({ error: "Only a senior administrator can manage this account" });
+      }
+      return res.status(404).json({ error: "Employee not found" });
+    }
     if (status === "active") {
       await sql`
         INSERT INTO channel_members (channel_id, user_id)
